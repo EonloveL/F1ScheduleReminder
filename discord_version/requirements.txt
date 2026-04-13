@@ -1,0 +1,14 @@
+# F1赛程提醒机器人 - Discord版本依赖
+# 安装命令: pip install -r requirements.txt
+
+# Discord API
+py-cord>=2.4.0
+
+# HTTP请求（调用F1 API）
+requests>=2.28.0
+
+# 定时任务调度
+APScheduler>=3.10.0
+
+# 时区处理
+pytz>=2022.1

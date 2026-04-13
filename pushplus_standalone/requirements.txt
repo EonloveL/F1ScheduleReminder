@@ -1,0 +1,14 @@
+# F1赛程提醒机器人 - PushPlus版本依赖
+# 安装命令: pip install -r requirements.txt
+
+# HTTP请求（调用F1 API和PushPlus API）
+requests==2.27.1
+
+# 定时任务调度
+APScheduler==3.9.1
+
+# 时区处理
+pytz==2022.1
+
+# Python 3.6 兼容 - ISO格式解析
+python-dateutil==2.8.2
