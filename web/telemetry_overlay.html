@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F1 遥测面板 · 透明度可调</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #000; overflow: hidden;
+               font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  #frame { width: 100%; height: 100%; border: 0; display: block;
+           opacity: 1; filter: brightness(1) contrast(1); transition: opacity .15s, filter .15s; }
+
+  /* 悬浮控制条 */
+  #bar { position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+         background: rgba(20,22,30,.92); border: 1px solid #333; border-radius: 12px;
+         padding: 8px 14px; display: flex; gap: 14px; align-items: center;
+         color: #ddd; font-size: 12px; z-index: 99; box-shadow: 0 4px 16px rgba(0,0,0,.5);
+         backdrop-filter: blur(6px); white-space: nowrap; }
+  #bar label { display: flex; gap: 6px; align-items: center; }
+  #bar input[type=range] { width: 110px; accent-color: #e10600; }
+  #bar .val { color: #e10600; font-weight: 700; min-width: 34px; }
+  #bar button { background: #242836; color: #ccc; border: 1px solid #333; border-radius: 8px;
+                padding: 5px 10px; font-size: 12px; cursor: pointer; }
+  #bar button:hover { background: #2e3346; }
+  #bar .preset { color: #888; }
+  #bar .preset:hover { color: #fff; }
+
+  /* 收起后的小圆钮 */
+  #fab { position: fixed; top: 10px; right: 10px; width: 38px; height: 38px; border-radius: 50%;
+         background: rgba(225,6,0,.9); color: #fff; border: 0; font-size: 17px; cursor: pointer;
+         z-index: 99; display: none; box-shadow: 0 4px 12px rgba(0,0,0,.5); }
+
+  @media (max-width: 640px) {
+    #bar { flex-wrap: wrap; white-space: normal; max-width: 94vw; }
+    #bar input[type=range] { width: 90px; }
+  }
+</style>
+</head>
+<body>
+<iframe id="frame" src="" title="F1遥测面板"></iframe>
+
+<div id="bar">
+  <strong style="color:#e10600">遥测面板</strong>
+  <label>透明度 <input type="range" id="opacity" min="20" max="100" value="100"><span class="val" id="opacityVal">100%</span></label>
+  <label>亮度 <input type="range" id="bright" min="30" max="120" value="100"><span class="val" id="brightVal">100%</span></label>
+  <label>对比度 <input type="range" id="contrast" min="60" max="140" value="100"><span class="val" id="contrastVal">100%</span></label>
+  <button class="preset" data-p="100,100,100">复位</button>
+  <button class="preset" data-p="55,75,110">夜间观赛</button>
+  <button class="preset" data-p="35,60,105">背景叠加</button>
+  <button id="hideBar">收起 ▲</button>
+</div>
+<button id="fab" title="展开控制条">🎚️</button>
+
+<script>
+const $ = id => document.getElementById(id);
+const frame = $('frame');
+
+// 嵌入目标：仅允许 f1cosmos.com 域名（防开放式跳转滥用），默认遥测页
+const ALLOWED_HOST = 'f1cosmos.com';
+const DEFAULT_SRC = 'https://f1cosmos.com/zh/dashboard/race/telemetry';
+(function () {
+  let src = DEFAULT_SRC;
+  const q = new URLSearchParams(location.search).get('src');
+  if (q) {
+    try {
+      const u = new URL(q);
+      if (u.protocol === 'https:' && (u.hostname === ALLOWED_HOST || u.hostname.endsWith('.' + ALLOWED_HOST))) {
+        src = q;
+      }
+    } catch (e) { /* 非法URL用默认 */ }
+  }
+  frame.src = src;
+})();
+
+function apply() {
+  const o = $('opacity').value / 100;
+  const b = $('bright').value / 100;
+  const c = $('contrast').value / 100;
+  frame.style.opacity = o;
+  frame.style.filter = `brightness(${b}) contrast(${c})`;
+  $('opacityVal').textContent = $('opacity').value + '%';
+  $('brightVal').textContent = $('bright').value + '%';
+  $('contrastVal').textContent = $('contrast').value + '%';
+  // 记住用户设置
+  try { localStorage.setItem('telemetryOverlay', `${$('opacity').value},${$('bright').value},${$('contrast').value}`); } catch (e) {}
+}
+
+['opacity', 'bright', 'contrast'].forEach(id => $(id).oninput = apply);
+
+document.querySelectorAll('.preset').forEach(btn => {
+  btn.onclick = () => {
+    const [o, b, c] = btn.dataset.p.split(',');
+    $('opacity').value = o; $('bright').value = b; $('contrast').value = c;
+    apply();
+  };
+});
+
+$('hideBar').onclick = () => { $('bar').style.display = 'none'; $('fab').style.display = 'block'; };
+$('fab').onclick = () => { $('bar').style.display = 'flex'; $('fab').style.display = 'none'; };
+
+// 恢复上次设置
+try {
+  const saved = localStorage.getItem('telemetryOverlay');
+  if (saved) {
+    const [o, b, c] = saved.split(',');
+    if (o) $('opacity').value = o;
+    if (b) $('bright').value = b;
+    if (c) $('contrast').value = c;
+  }
+} catch (e) {}
+apply();
+</script>
+</body>
+</html>

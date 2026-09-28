@@ -1,0 +1,73 @@
+{
+  "version": 7,
+  "fit_year": [
+    2023,
+    2024
+  ],
+  "quali_weights": [
+    1.96217,
+    0.20561,
+    0.24595,
+    0.33623,
+    0.19651,
+    0.0,
+    0.04131
+  ],
+  "quali_resid_std": 4.248,
+  "quali_r2": 0.437,
+  "race_weights": [
+    0.00023,
+    0.14312,
+    0.19194,
+    0.44424,
+    0.09597,
+    0.0,
+    -0.00384,
+    0.02299,
+    0.0
+  ],
+  "race_resid_std": 4.252,
+  "race_r2": 0.456,
+  "mean_speed_index": 220.68,
+  "samples": {
+    "quali": 844,
+    "race": 872
+  },
+  "backtest": {
+    "backtest_year": 2025,
+    "fit_year": [
+      2023,
+      2024
+    ],
+    "races_tested": 23,
+    "podium_hits_per_race": 2.39,
+    "mean_abs_pos_error": 3.27,
+    "top10_abs_pos_error": 3.5,
+    "quali_top3_hits_per_race": 2.09,
+    "podium_hits_detail": [
+      2,
+      2,
+      3,
+      3,
+      2,
+      2,
+      3,
+      3,
+      2,
+      2,
+      3,
+      2,
+      3,
+      2,
+      2,
+      3,
+      2,
+      2,
+      2,
+      3,
+      2,
+      2,
+      3
+    ]
+  }
+}

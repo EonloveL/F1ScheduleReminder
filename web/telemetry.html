@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F1 遥测对比</title>
+<script src="/static/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: #0f1115; color: #eee; padding: 14px; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 19px; margin-bottom: 2px; }
+  .sub { color: #888; font-size: 12px; margin-bottom: 12px; }
+  .card { background: #1a1d26; border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+  select, input { background: #242836; color: #eee; border: 1px solid #333; border-radius: 8px;
+                  padding: 8px 10px; font-size: 14px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { padding: 6px 10px; border-radius: 16px; border: 2px solid #333; background: #242836;
+          color: #ccc; font-size: 13px; cursor: pointer; font-weight: 600; }
+  .chip.on { color: #fff; }
+  .chip.dim { opacity: .35; }
+  .btn { padding: 9px 18px; border: 0; border-radius: 8px; background: #e10600; color: #fff;
+         font-size: 14px; font-weight: 700; cursor: pointer; }
+  .btn:disabled { background: #555; }
+  .chart-box { position: relative; height: 200px; margin-bottom: 4px; }
+  .ptitle { font-size: 13px; color: #aaa; margin: 6px 0 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 6px 8px; text-align: center; border-bottom: 1px solid #262a36; }
+  th { color: #999; font-weight: 500; font-size: 12px; }
+  td.best { color: #b98cff; font-weight: 700; }
+  .msg { color: #e10600; font-size: 13px; padding: 6px 0; }
+  #loading { color: #aaa; font-size: 13px; padding: 20px; text-align: center; display: none; }
+</style>
+</head>
+<body>
+<h1>📊 F1 遥测对比</h1>
+<div class="sub">F1 官方计时归档数据 · 速度/油门/刹车 vs 距离 · 鼠标悬停高亮单条曲线</div>
+
+<div class="card row">
+  <select id="raceSel"></select>
+  <select id="sessSel"></select>
+  <select id="lapSel"><option value="fastest">最快圈</option></select>
+</div>
+
+<div class="card">
+  <div class="ptitle">选择车手（2-4位）</div>
+  <div class="chips" id="driverChips"></div>
+</div>
+
+<div class="card row">
+  <button class="btn" id="compareBtn">开始对比</button>
+  <span class="msg" id="msg"></span>
+</div>
+
+<div id="loading">⏳ 正在加载官方遥测数据（首次较慢）…</div>
+
+<div class="card" id="chartsCard" style="display:none">
+  <div class="ptitle">速度 km/h</div><div class="chart-box"><canvas id="cSpeed"></canvas></div>
+  <div class="ptitle">油门 %</div><div class="chart-box"><canvas id="cThrottle"></canvas></div>
+  <div class="ptitle">刹车</div><div class="chart-box"><canvas id="cBrake"></canvas></div>
+</div>
+
+<div class="card" id="sectorCard" style="display:none">
+  <div class="ptitle">分段与测速点对比（紫色=该项最快）</div>
+  <div style="overflow-x:auto"><table id="sectorTable"></table></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let meta = null;
+const selected = new Set();
+let charts = [];
+
+async function api(url) {
+  const r = await fetch(url);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+function fmtLap(sec) {
+  if (sec == null) return '-';
+  return Math.floor(sec / 60) + ':' + (sec % 60).toFixed(3).padStart(6, '0');
+}
+
+async function init() {
+  const sessions = await api('/telemetry/api/sessions');
+  const rs = $('raceSel');
+  sessions.forEach(s => {
+    const o = document.createElement('option');
+    o.value = JSON.stringify({year: s.year, round: s.round, sessions: s.sessions});
+    o.textContent = 'R' + s.round + ' ' + s.raceName;
+    rs.appendChild(o);
+  });
+  rs.onchange = onRaceChange;
+  const qp = new URLSearchParams(location.search);
+  if (qp.get('round')) {
+    for (let i = 0; i < rs.options.length; i++) {
+      if (JSON.parse(rs.options[i].value).round === qp.get('round')) { rs.selectedIndex = i; break; }
+    }
+  }
+  onRaceChange();
+  if (qp.get('session')) $('sessSel').value = qp.get('session');
+  await loadMeta();
+  if (qp.get('drivers')) {
+    qp.get('drivers').split(',').forEach(t => { if (meta.drivers.some(d => d.tla === t)) selected.add(t.toUpperCase()); });
+    renderChips();
+  }
+  if (selected.size >= 2) doCompare();
+}
+
+function onRaceChange() {
+  const v = JSON.parse($('raceSel').value);
+  const ss = $('sessSel');
+  ss.innerHTML = '';
+  const names = {race: '正赛', qualifying: '排位赛', sprint: '冲刺赛', sprint_qualifying: '冲刺排位',
+                 fp1: '练习赛1', fp2: '练习赛2', fp3: '练习赛3'};
+  v.sessions.forEach(t => {
+    const o = document.createElement('option');
+    o.value = t; o.textContent = names[t] || t;
+    ss.appendChild(o);
+  });
+  ss.value = v.sessions.includes('race') ? 'race' : v.sessions[0];
+  ss.onchange = loadMeta;
+}
+
+async function loadMeta() {
+  const v = JSON.parse($('raceSel').value);
+  meta = await api(`/telemetry/api/meta?year=${v.year}&round=${v.round}&session=${$('sessSel').value}`);
+  selected.clear();
+  // 默认选最快圈前两名
+  const sorted = [...meta.drivers].filter(d => d.fastest_time).sort((a, b) => a.fastest_time - b.fastest_time);
+  sorted.slice(0, 2).forEach(d => selected.add(d.tla));
+  renderChips();
+  // 圈号选择器
+  const ls = $('lapSel');
+  ls.innerHTML = '<option value="fastest">各自最快圈</option>';
+  const maxLap = Math.max(...meta.drivers.map(d => d.laps), 0);
+  for (let i = 1; i <= maxLap; i++) {
+    const o = document.createElement('option');
+    o.value = i; o.textContent = '第 ' + i + ' 圈';
+    ls.appendChild(o);
+  }
+}
+
+function renderChips() {
+  const box = $('driverChips');
+  box.innerHTML = '';
+  meta.drivers.forEach(d => {
+    const c = document.createElement('span');
+    c.className = 'chip' + (selected.has(d.tla) ? ' on' : '');
+    c.style.borderColor = d.color;
+    if (selected.has(d.tla)) c.style.background = d.color + '33';
+    c.textContent = d.tla + ' ' + d.name.split(' ').pop();
+    if (!d.laps) { c.classList.add('dim'); c.title = '该车手无圈速数据'; }
+    c.onclick = () => {
+      if (selected.has(d.tla)) selected.delete(d.tla);
+      else if (selected.size < 4) selected.add(d.tla);
+      renderChips();
+    };
+    box.appendChild(c);
+  });
+}
+
+function baseChart(canvasId, yLabel, yMax) {
+  return new Chart($(canvasId), {
+    type: 'line',
+    data: { datasets: [] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      parsing: false, spanGaps: true,
+      interaction: { mode: 'index', axis: 'x', intersect: false },
+      onHover(e, els, chart) {
+        chart.data.datasets.forEach((ds, i) => {
+          ds.borderWidth = 1.6;
+          ds.borderColor = ds._c + '';
+        });
+        if (els.length) {
+          const idx = els[0].datasetIndex;
+          chart.data.datasets.forEach((ds, i) => {
+            if (i === idx) { ds.borderWidth = 3.5; }
+            else { ds.borderColor = ds._c + '44'; }
+          });
+        }
+        chart.update('none');
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: items => '距离 ' + items[0].parsed.x + ' m',
+            label: item => item.dataset.label + ': ' + Math.round(item.parsed.y)
+          }
+        }
+      },
+      scales: {
+        x: { type: 'linear', title: { display: true, text: '距离 (m)', color: '#888' },
+             ticks: { color: '#888' }, grid: { color: '#262a36' } },
+        y: { title: { display: true, text: yLabel, color: '#888' }, max: yMax,
+             ticks: { color: '#888' }, grid: { color: '#262a36' } }
+      }
+    }
+  });
+}
+
+async function doCompare() {
+  const msg = $('msg');
+  msg.textContent = '';
+  if (selected.size < 2) { msg.textContent = '请至少选择2位车手'; return; }
+  const v = JSON.parse($('raceSel').value);
+  $('compareBtn').disabled = true;
+  $('loading').style.display = 'block';
+  try {
+    const lap = $('lapSel').value;
+    const data = await api(`/telemetry/api/compare?year=${v.year}&round=${v.round}&session=${$('sessSel').value}` +
+                           `&drivers=${[...selected].join(',')}&lap=${lap}`);
+    renderCharts(data);
+    renderSectors(data);
+  } catch (e) {
+    msg.textContent = e.message;
+  } finally {
+    $('compareBtn').disabled = false;
+    $('loading').style.display = 'none';
+  }
+}
+
+function renderCharts(data) {
+  charts.forEach(c => c.destroy());
+  charts = [];
+  $('chartsCard').style.display = 'block';
+  const panels = [
+    ['cSpeed', '速度 km/h', 'speed', null],
+    ['cThrottle', '油门 %', 'throttle', 105],
+    ['cBrake', '刹车', 'brake', 105],
+  ];
+  for (const [cid, ylabel, key, ymax] of panels) {
+    const ch = baseChart(cid, ylabel, ymax);
+    ch.data.datasets = data.drivers.map(d => ({
+      label: d.tla + (d.lap_time ? ' ' + fmtLap(d.lap_time) : ''),
+      data: d.distance.map((x, i) => ({ x, y: d[key][i] })),
+      borderColor: d.color, _c: d.color,
+      borderWidth: 1.6, pointRadius: 0, tension: 0.15,
+      borderDash: data.drivers.filter(x => x.color === d.color).length > 1 &&
+                  data.drivers.findIndex(x => x.color === d.color && x.tla === d.tla) > 0 ? [6, 4] : [],
+    }));
+    charts.push(ch);
+  }
+}
+
+function renderSectors(data) {
+  const card = $('sectorCard');
+  card.style.display = 'block';
+  const t = $('sectorTable');
+  const keys = [['0', 'S1'], ['1', 'S2'], ['2', 'S3']];
+  const spKeys = ['I1', 'I2', 'ST', 'FL'];
+  // 每列最佳值
+  const best = {};
+  keys.forEach(([k]) => {
+    const vals = data.drivers.map(d => d.sectors?.[k]).filter(v => v != null);
+    if (vals.length) best[k] = Math.min(...vals);
+  });
+  spKeys.forEach(k => {
+    const vals = data.drivers.map(d => d.speeds?.[k]).filter(v => v != null);
+    if (vals.length) best[k] = Math.max(...vals);
+  });
+  const lapTimes = data.drivers.map(d => d.lap_time).filter(v => v != null);
+  const bestLap = lapTimes.length ? Math.min(...lapTimes) : null;
+
+  let html = '<tr><th>车手</th><th>圈速</th>' +
+    keys.map(([, n]) => '<th>' + n + '</th>').join('') +
+    spKeys.map(k => '<th>' + k + ' km/h</th>').join('') + '</tr>';
+  data.drivers.forEach(d => {
+    html += '<tr><td><span class="chip" style="border-color:' + d.color + ';cursor:default">' + d.tla + '</span>' +
+      (d.shared_window ? '<div style="font-size:10px;color:#888">同窗口</div>' : '') + '</td>';
+    html += '<td' + (d.lap_time === bestLap ? ' class="best"' : '') + '>' + fmtLap(d.lap_time) + '</td>';
+    keys.forEach(([k]) => {
+      const v = d.sectors?.[k];
+      html += '<td' + (v != null && v === best[k] ? ' class="best"' : '') + '>' + (v != null ? v.toFixed(3) : '-') + '</td>';
+    });
+    spKeys.forEach(k => {
+      const v = d.speeds?.[k];
+      html += '<td' + (v != null && v === best[k] ? ' class="best"' : '') + '>' + (v != null ? Math.round(v) : '-') + '</td>';
+    });
+    html += '</tr>';
+  });
+  t.innerHTML = html;
+}
+
+$('compareBtn').onclick = doCompare;
+init().catch(e => { $('msg').textContent = e.message; });
+</script>
+</body>
+</html>

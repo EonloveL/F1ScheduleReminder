@@ -1,0 +1,31 @@
+# QQ官方群聊Bot 依赖
+qq-botpy>=1.2.1
+nest-asyncio>=1.5.0
+
+# 定时任务依赖
+APScheduler>=3.10.0
+
+# 时区支持
+pytz>=2023.3
+
+# HTTP请求
+requests>=2.28.0
+
+# 日期时间处理
+python-dateutil>=2.8.0
+
+# 评分表单网页服务
+flask>=3.0.0
+gunicorn>=21.0.0
+
+# 评分统计图表
+matplotlib>=3.7.0
+
+# 遥测数据分析
+pandas>=2.0.0
+
+# Webhook 签名验证
+cryptography>=41.0.0
+
+# FIA官方文档PDF解析（升级件/PU用量）
+pdfplumber>=0.11.0

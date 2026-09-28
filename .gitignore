@@ -1,0 +1,27 @@
+# 环境与密钥
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+.idea/
+.vscode/
+
+# 日志
+*.log
+botpy.log*
+
+# 运行时数据（随包分发的 profile 数据除外，见下方白名单）
+data/*
+!data/drivers_profile.json
+!data/pu_limits.json
+!data/circuits_data.json
+!data/prediction_model.json
+!data/prediction_dataset_*.json
+
+# 部署产物
+*.zip

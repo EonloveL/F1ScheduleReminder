@@ -1,0 +1,320 @@
+{
+  "_meta": {
+    "season": 2026,
+    "last_verified": "2026-09-09",
+    "description": "车手/车队统一档案。维护窗口：赛季结束后至次年开赛前重点更新（车手市场变动集中期）",
+    "roster_status_values": [
+      "regular",
+      "rookie",
+      "reserve",
+      "development"
+    ]
+  },
+  "drivers": {
+    "max_verstappen": {
+      "name_en": "Max Verstappen",
+      "last_name": "Verstappen",
+      "name_cn": "维斯塔潘",
+      "aliases": [
+        "潘子"
+      ],
+      "team": "red_bull",
+      "roster_status": "regular"
+    },
+    "hadjar": {
+      "name_en": "Isack Hadjar",
+      "last_name": "Hadjar",
+      "name_cn": "哈贾尔",
+      "aliases": [],
+      "team": "red_bull",
+      "roster_status": "reserve",
+      "verified": false,
+      "note": "2026季中被换下（劳森接替大红牛席位），是否留任储备车手待核实"
+    },
+    "lawson": {
+      "name_en": "Liam Lawson",
+      "last_name": "Lawson",
+      "name_cn": "劳森",
+      "aliases": [],
+      "team": "red_bull",
+      "roster_status": "regular",
+      "note": "2026季中由小红牛升入大红牛（接替哈贾尔）"
+    },
+    "arvid_lindblad": {
+      "name_en": "Arvid Lindblad",
+      "last_name": "Lindblad",
+      "name_cn": "林德布拉德",
+      "aliases": [],
+      "team": "rb",
+      "roster_status": "rookie"
+    },
+    "leclerc": {
+      "name_en": "Charles Leclerc",
+      "last_name": "Leclerc",
+      "name_cn": "勒克莱尔",
+      "aliases": [
+        "乐扣"
+      ],
+      "team": "ferrari",
+      "roster_status": "regular"
+    },
+    "hamilton": {
+      "name_en": "Lewis Hamilton",
+      "last_name": "Hamilton",
+      "name_cn": "汉密尔顿",
+      "aliases": [
+        "老汉"
+      ],
+      "team": "ferrari",
+      "roster_status": "regular"
+    },
+    "russell": {
+      "name_en": "George Russell",
+      "last_name": "Russell",
+      "name_cn": "拉塞尔",
+      "aliases": [],
+      "team": "mercedes",
+      "roster_status": "regular"
+    },
+    "antonelli": {
+      "name_en": "Andrea Kimi Antonelli",
+      "last_name": "Antonelli",
+      "name_cn": "安东内利",
+      "aliases": [
+        "小Kimi",
+        "kimi"
+      ],
+      "team": "mercedes",
+      "roster_status": "regular"
+    },
+    "norris": {
+      "name_en": "Lando Norris",
+      "last_name": "Norris",
+      "name_cn": "诺里斯",
+      "aliases": [],
+      "team": "mclaren",
+      "roster_status": "regular"
+    },
+    "piastri": {
+      "name_en": "Oscar Piastri",
+      "last_name": "Piastri",
+      "name_cn": "皮亚斯特里",
+      "aliases": [],
+      "team": "mclaren",
+      "roster_status": "regular"
+    },
+    "alonso": {
+      "name_en": "Fernando Alonso",
+      "last_name": "Alonso",
+      "name_cn": "阿隆索",
+      "aliases": [
+        "头哥"
+      ],
+      "team": "aston_martin",
+      "roster_status": "regular"
+    },
+    "stroll": {
+      "name_en": "Lance Stroll",
+      "last_name": "Stroll",
+      "name_cn": "斯特罗尔",
+      "aliases": [
+        "少爷"
+      ],
+      "team": "aston_martin",
+      "roster_status": "regular"
+    },
+    "gasly": {
+      "name_en": "Pierre Gasly",
+      "last_name": "Gasly",
+      "name_cn": "加斯利",
+      "aliases": [],
+      "team": "alpine",
+      "roster_status": "regular"
+    },
+    "colapinto": {
+      "name_en": "Franco Colapinto",
+      "last_name": "Colapinto",
+      "name_cn": "科拉平托",
+      "aliases": [],
+      "team": "alpine",
+      "roster_status": "regular"
+    },
+    "albon": {
+      "name_en": "Alexander Albon",
+      "last_name": "Albon",
+      "name_cn": "阿尔本",
+      "aliases": [],
+      "team": "williams",
+      "roster_status": "regular"
+    },
+    "sainz": {
+      "name_en": "Carlos Sainz",
+      "last_name": "Sainz",
+      "name_cn": "塞恩斯",
+      "aliases": [
+        "赛恩斯"
+      ],
+      "team": "williams",
+      "roster_status": "regular"
+    },
+    "hulkenberg": {
+      "name_en": "Nico Hulkenberg",
+      "last_name": "Hulkenberg",
+      "name_cn": "霍肯伯格",
+      "aliases": [
+        "霍肯博格"
+      ],
+      "team": "audi",
+      "roster_status": "regular"
+    },
+    "bortoleto": {
+      "name_en": "Gabriel Bortoleto",
+      "last_name": "Bortoleto",
+      "name_cn": "博托莱托",
+      "aliases": [],
+      "team": "audi",
+      "roster_status": "regular"
+    },
+    "ocon": {
+      "name_en": "Esteban Ocon",
+      "last_name": "Ocon",
+      "name_cn": "奥康",
+      "aliases": [],
+      "team": "haas",
+      "roster_status": "regular"
+    },
+    "bearman": {
+      "name_en": "Oliver Bearman",
+      "last_name": "Bearman",
+      "name_cn": "贝尔曼",
+      "aliases": [],
+      "team": "haas",
+      "roster_status": "regular"
+    },
+    "perez": {
+      "name_en": "Sergio Perez",
+      "last_name": "Perez",
+      "name_cn": "佩雷兹",
+      "aliases": [
+        "佩雷斯"
+      ],
+      "team": "cadillac",
+      "roster_status": "regular"
+    },
+    "bottas": {
+      "name_en": "Valtteri Bottas",
+      "last_name": "Bottas",
+      "name_cn": "博塔斯",
+      "aliases": [],
+      "team": "cadillac",
+      "roster_status": "regular"
+    },
+    "tsunoda": {
+      "name_en": "Yuki Tsunoda",
+      "last_name": "Tsunoda",
+      "name_cn": "角田裕毅",
+      "aliases": [
+        "角田"
+      ],
+      "team": "rb",
+      "roster_status": "regular",
+      "note": "2026季中回归小红牛（接替劳森席位）"
+    },
+    "zhou": {
+      "name_en": "Zhou Guanyu",
+      "last_name": "Zhou",
+      "name_cn": "周冠宇",
+      "aliases": [],
+      "team": "cadillac",
+      "roster_status": "reserve",
+      "verified": false
+    },
+    "doohan": {
+      "name_en": "Jack Doohan",
+      "last_name": "Doohan",
+      "name_cn": "杜汉",
+      "aliases": [],
+      "team": "alpine",
+      "roster_status": "reserve",
+      "verified": false
+    }
+  },
+  "teams": {
+    "red_bull": {
+      "name_en": "Red Bull Racing",
+      "aliases": [
+        "红牛"
+      ]
+    },
+    "rb": {
+      "name_en": "Racing Bulls",
+      "aliases": [
+        "小红牛",
+        "二牛",
+        "racing bulls"
+      ]
+    },
+    "ferrari": {
+      "name_en": "Ferrari",
+      "aliases": [
+        "法拉利",
+        "跃马"
+      ]
+    },
+    "mercedes": {
+      "name_en": "Mercedes",
+      "aliases": [
+        "梅赛德斯",
+        "奔驰",
+        "梅奔"
+      ]
+    },
+    "mclaren": {
+      "name_en": "McLaren",
+      "aliases": [
+        "迈凯伦",
+        "迈凯轮"
+      ]
+    },
+    "aston_martin": {
+      "name_en": "Aston Martin",
+      "aliases": [
+        "阿斯顿马丁",
+        "马丁"
+      ]
+    },
+    "alpine": {
+      "name_en": "Alpine",
+      "aliases": [
+        "阿尔派",
+        "alpine"
+      ]
+    },
+    "williams": {
+      "name_en": "Williams",
+      "aliases": [
+        "威廉姆斯"
+      ]
+    },
+    "audi": {
+      "name_en": "Audi",
+      "aliases": [
+        "奥迪",
+        "索伯",
+        "索博"
+      ]
+    },
+    "haas": {
+      "name_en": "Haas",
+      "aliases": [
+        "哈斯"
+      ]
+    },
+    "cadillac": {
+      "name_en": "Cadillac",
+      "aliases": [
+        "凯迪拉克"
+      ]
+    }
+  }
+}

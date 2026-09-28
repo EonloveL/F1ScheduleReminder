@@ -1,0 +1,16 @@
+{
+  "_meta": {
+    "description": "动力单元部件每赛季使用上限（超出即触发罚退）。按赛季维护：FIA规则变更时更新对应赛季键值",
+    "source": "F1.com《How many power unit components has each driver used in 2026 so far》(2026-06-27) / FIA 2026 PU Sporting Regulations",
+    "last_verified": "2026-09-07",
+    "notes": [
+      "2026新规取消MGU-H，部件键集合为 ICE/TC/EXH/MGU-K/ES/PU-CE/PU-ANC",
+      "2026各部件额度中含1个bonus奖励部件（新规则过渡），2027起额度下调",
+      "PU-ANC（附属部件）上限6来自f1-fansite，F1官方文章未明确提及，如有出入请修正",
+      "罚退规则：首次超限10位，再次5位，累计超15位直接从队尾发车"
+    ]
+  },
+  "2025": {"ICE": 4, "TC": 4, "MGU-H": 4, "MGU-K": 4, "ES": 2, "PU-CE": 2, "EXH": 8},
+  "2026": {"ICE": 4, "TC": 4, "MGU-K": 3, "ES": 3, "PU-CE": 3, "EXH": 4, "PU-ANC": 6},
+  "2027": {"ICE": 3, "TC": 3, "MGU-K": 2, "ES": 2, "PU-CE": 2, "EXH": 3}
+}
