@@ -31,6 +31,12 @@
 │   ├── rating_server.py    # 评分 Web 服务（含车手头像/车队图标路由）
 │   ├── live_server.py      # 实时计时面板
 │   └── static/avatars/     # 车手头像 / 车队图标静态资源
+├── deploy/                 # Docker 一键部署（见 deploy/README.md）
+│   ├── docker-compose.yml  # 机器人 + 评分 + 实时面板 + Caddy 自动 HTTPS
+│   ├── Dockerfile / Dockerfile.live
+│   ├── Caddyfile.example   # 反代配置模板（替换域名即可）
+│   ├── .env.example        # 完整环境变量模板
+│   └── deploy.sh           # 一键部署脚本（含配置预检）
 └── data/                   # 随包分发的档案数据（运行时数据已 gitignore）
     ├── drivers_profile.json    # 车手/车队档案
     ├── pu_limits.json          # PU 部件赛季上限（按赛季）
@@ -59,7 +65,7 @@ cp .env.example .env
 #   TAVILY_API_KEY / BOCHA_API_KEY（联网搜索增强）
 ```
 
-### 3. 安装运行
+### 3. 安装运行（本地）
 
 ```bash
 pip install -r requirements.txt
@@ -69,7 +75,16 @@ python web/rating_server.py   # 评分服务（:8080，群友评分入口）
 python web/live_server.py     # 实时计时面板（:8091，比赛周可用）
 ```
 
-生产部署建议：gunicorn 跑 web 服务 + 反向代理（HTTPS）暴露 Webhook 回调路径 `/bot/callback`，并将 `RATING_BASE_URL` 配置为你的公网域名。
+### 4. Docker 一键部署（推荐生产环境）
+
+```bash
+cd deploy
+cp .env.example .env && cp Caddyfile.example Caddyfile
+# 编辑 .env 和 Caddyfile（填入密钥 + 你的域名）
+./deploy.sh
+```
+
+详见 [deploy/README.md](deploy/README.md)：一条命令拉起机器人、评分网页、实时面板和 Caddy 反代（自动申请/续期 HTTPS 证书）。部署后到 QQ 开放平台把回调地址配置为 `https://你的域名/bot/callback`。
 
 ## 数据源
 

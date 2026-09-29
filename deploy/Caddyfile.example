@@ -1,0 +1,26 @@
+# 1. 复制本文件为 Caddyfile
+# 2. 把 your-domain.example.com 全部替换为你的域名（需已解析到本服务器，并放行 80/443）
+# 3. Caddy 会自动申请并续期 Let's Encrypt 证书，无需手动签发
+your-domain.example.com {
+	# QQ 平台 Webhook 回调（QQ 开放平台后台填写：https://你的域名/bot/callback）
+	route /bot/* {
+		reverse_proxy f1-qqbot:8090
+	}
+	# 实时计时面板
+	route /live* {
+		reverse_proxy f1-qqbot-live:8091
+	}
+	# 头像/队标静态文件由 Caddy 直接服务（绕过 gunicorn）
+	# URL 形如 /av8/drivers/leclerc.png → strip_prefix /av8 → /drivers/leclerc.png
+	# 注意：common/openf1_api.py 中 _AVATAR_PATH_VER 递增时，此处路径前缀需同步
+	route /av8/* {
+		uri strip_prefix /av8
+		root * /app/avatars
+		header Cache-Control "public, max-age=86400"
+		file_server
+	}
+	# 其余路径 → 评分网页
+	route /* {
+		reverse_proxy f1-qqbot-web:8080
+	}
+}

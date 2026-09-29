@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# libgomp1：ctranslate2（faster-whisper）的 OpenMP 依赖
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY deploy/requirements-live.txt /app/requirements-live.txt
+RUN pip install --no-cache-dir -r /app/requirements-live.txt
+
+COPY . /app/
+
+CMD ["python", "-u", "web/live_server.py"]

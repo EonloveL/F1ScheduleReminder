@@ -1,0 +1,124 @@
+services:
+  f1-qqbot:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: f1-qqbot
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      - QQ_APPID=${QQ_APPID}
+      - QQ_APP_SECRET=${QQ_APP_SECRET}
+      - QQ_GROUP_OPENID=${QQ_GROUP_OPENID}
+      - USE_SANDBOX=${USE_SANDBOX:-false}
+      - POST_RACE_DELAY=${POST_RACE_DELAY:-30}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONIOENCODING=utf-8
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY:-}
+      - LLM_PROVIDER=${LLM_PROVIDER:-kimi}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - LLM_MODEL=${LLM_MODEL:-kimi-k2.6}
+      - LLM_ASK_ENABLED=${LLM_ASK_ENABLED:-true}
+      - LLM_MAX_CONCURRENCY=${LLM_MAX_CONCURRENCY:-4}
+      - LLM_ASK_NOTICE_AFTER=${LLM_ASK_NOTICE_AFTER:-45}
+      - LLM_ASK_HARD_TIMEOUT=${LLM_ASK_HARD_TIMEOUT:-600}
+      - LLM_CONNECT_TIMEOUT=${LLM_CONNECT_TIMEOUT:-10}
+      - LLM_L1_TIMEOUT=${LLM_L1_TIMEOUT:-60}
+      - LLM_L2_TIMEOUT=${LLM_L2_TIMEOUT:-150}
+      - LLM_L2_MAX_TOKENS=${LLM_L2_MAX_TOKENS:-1800}
+      - LLM_L1_JSON_MODE=${LLM_L1_JSON_MODE:-true}
+      - KB_ENABLED=${KB_ENABLED:-true}
+      - ADMIN_OPENIDS=${ADMIN_OPENIDS:-}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+      - BOCHA_API_KEY=${BOCHA_API_KEY:-}
+      - BOT_WEBHOOK_SECRET=${BOT_WEBHOOK_SECRET:-}
+      - WEBHOOK_PORT=${WEBHOOK_PORT:-8090}
+      - WEBHOOK_EVENT_WORKERS=${WEBHOOK_EVENT_WORKERS:-10}
+      - WEEKLY_PREVIEW_ENABLED=${WEEKLY_PREVIEW_ENABLED:-true}
+      - WEEKLY_VERIFY_LAP_RECORD=${WEEKLY_VERIFY_LAP_RECORD:-true}
+      - RATING_BASE_URL=${RATING_BASE_URL:-https://your-domain.example.com}
+      - RATING_ENABLED=${RATING_ENABLED:-true}
+      - DM_SESSION_RESULT=${DM_SESSION_RESULT:-true}
+      - NEWS_ENABLED=${NEWS_ENABLED:-true}
+      - UPGRADE_DATA_SOURCE=${UPGRADE_DATA_SOURCE:-fia}
+      - TELEMETRY_PROXY=${TELEMETRY_PROXY:-}
+      - TELEMETRY_BASE_URL=${TELEMETRY_BASE_URL:-}
+      - LIVE_BASE_URL=${LIVE_BASE_URL:-}
+    volumes:
+      - ../data:/app/data
+    networks:
+      - f1-qqbot-net
+
+  f1-qqbot-web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: f1-qqbot-web
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    command: ["gunicorn", "-w", "1", "--threads", "4", "--timeout", "120", "-b", "0.0.0.0:8080", "--chdir", "/app/web", "rating_server:app"]
+    working_dir: /app
+    environment:
+      - PYTHONIOENCODING=utf-8
+      - RATING_PORT=8080
+      - TELEMETRY_PROXY=${TELEMETRY_PROXY:-}
+      - TELEMETRY_BASE_URL=${TELEMETRY_BASE_URL:-}
+    volumes:
+      - ../data:/app/data
+    networks:
+      - f1-qqbot-net
+
+  f1-qqbot-live:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.live
+    container_name: f1-qqbot-live
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    command: ["gunicorn", "-w", "1", "--threads", "4", "--timeout", "120", "-b", "0.0.0.0:8091", "--chdir", "/app/web", "live_server:app"]
+    working_dir: /app
+    environment:
+      - PYTHONIOENCODING=utf-8
+      - LIVE_PORT=8091
+      - WHISPER_MODEL=${WHISPER_MODEL:-base}
+      - WHISPER_LANGUAGE=${WHISPER_LANGUAGE:-en}
+      - OPENF1_USERNAME=${OPENF1_USERNAME:-}
+      - OPENF1_PASSWORD=${OPENF1_PASSWORD:-}
+    networks:
+      - f1-qqbot-net
+
+  f1-caddy:
+    image: caddy:2
+    container_name: f1-caddy
+    restart: always
+    ports:
+      - "80:80"      # ACME HTTP 验证 + HTTP 跳转
+      - "443:443"    # HTTPS（QQ 平台回调/群友评分入口）
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data          # 证书持久化（Caddy 自动申请/续期）
+      - caddy_config:/config
+      - ../web/static/avatars:/app/avatars:ro   # 头像/队标静态文件由 Caddy 直接服务（绕过 gunicorn）
+    networks:
+      - f1-qqbot-net
+
+networks:
+  f1-qqbot-net:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

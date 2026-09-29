@@ -1,0 +1,5 @@
+# F1 实时计时面板（含 TR 文字转写）依赖
+flask>=3.0.0
+gunicorn>=21.0.0
+requests>=2.28.0
+faster-whisper>=1.0.0
