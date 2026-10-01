@@ -37,6 +37,12 @@
 │   ├── Caddyfile.example   # 反代配置模板（替换域名即可）
 │   ├── .env.example        # 完整环境变量模板
 │   └── deploy.sh           # 一键部署脚本（含配置预检）
+├── analysis/               # 开发者工具：预测模型回测/校准（普通部署不需要）
+│   ├── backtest_circuit_hist.py  # 模型权重受控回测（改权重前先跑）
+│   ├── backtest_sc_effect.py     # 安全车修正系数回测
+│   ├── verify_sc_calibration.py  # 概率校准对比
+│   ├── compute_sc_rates.py       # 赛道安全车率年度统计（刷新 circuits_data.json）
+│   └── fit_window_compare.py     # 拟合窗口对比
 └── data/                   # 随包分发的档案数据（运行时数据已 gitignore）
     ├── drivers_profile.json    # 车手/车队档案
     ├── pu_limits.json          # PU 部件赛季上限（按赛季）
