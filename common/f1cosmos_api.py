@@ -751,13 +751,18 @@ class F1CosmosAPI:
         changed = []
         snapshot = {}
         for e in current:
-            key = e["last_name"] or e["tla"] or e["driver_name"]
+            # 以车号（席位）为主键：季中换人时新车手继承席位 PU 用量，
+            # 按 last_name 键会把继承额度误报为新车手的全新变更
+            seat = str(e.get("racing_number") or "")
+            legacy_key = e["last_name"] or e["tla"] or e["driver_name"]
+            key = seat or legacy_key
             cur = e["usages"]
             snapshot[key] = cur
             if not has_prev:
                 # 首次运行无基线，只保存快照，不播报
                 continue
-            prev_u = prev.get(key, {})
+            # 兼容旧版按 last_name 键控的快照
+            prev_u = prev.get(key) or prev.get(legacy_key) or {}
             diffs = []
             for k in self.PU_ORDER:
                 cur_v = int(cur.get(k, 0) or 0)

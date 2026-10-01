@@ -149,7 +149,17 @@ class ReminderScheduler:
                 logger.info(f"✓ 遥测缓存已清理 ({count} 个文件)")
         except Exception as e:
             logger.error(f"遥测缓存清理失败: {e}")
-        
+
+        # 6. 内存态同步：store 实例持有旧 dict，若不重载，下次变更会把清理前的旧数据回写覆盖归档结果
+        for key in ("prefs_store", "pushed_store"):
+            store = self.config.get(key)
+            if store is not None and hasattr(store, "_load"):
+                try:
+                    store._data = store._load()
+                    logger.info(f"✓ {key} 内存态已重载")
+                except Exception as e:
+                    logger.warning(f"{key} 内存态重载失败: {e}")
+
         logger.info(f"✓ {year} 年度数据清理完成（已保留赛道数据/赛程缓存）")
         
     def stop(self):
@@ -411,7 +421,7 @@ class ReminderScheduler:
                 standings = self.f1_api.get_current_standings(force_refresh=True)
                 source, psum = "force_refresh", self.f1_api._standings_points_sum(standings or {})
             if standings and (standings.get('drivers') or standings.get('constructors')):
-                if min_points_sum is not None and psum and psum < min_points_sum - 0.5:
+                if min_points_sum is not None and (not psum or psum < min_points_sum - 0.5):
                     logger.warning(f"积分榜疑似滞后（源 {source}，总和 {psum} < 预期≥{min_points_sum}），转入补推轮询")
                 else:
                     logger.info(f"积分榜已就绪（源 {source}，总和 {psum}）")

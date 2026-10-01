@@ -35,8 +35,10 @@ class PushedResultsStore:
 
     def _save(self):
         try:
-            with open(self.file_path, "w", encoding="utf-8") as f:
+            tmp = self.file_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, self.file_path)
         except Exception as e:
             logger.error(f"保存推送记录失败: {e}")
 

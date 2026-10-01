@@ -202,16 +202,16 @@ class KnowledgeStore:
     def knowledge_block(self) -> str:
         """生成注入 L2 系统提示的知识块（30s mtime 缓存）"""
         now = time.time()
-        if self._kb_cache["text"] is not None and now - self._kb_cache["ts"] < 30:
-            return self._kb_cache["text"]
         with self._lock:
+            if self._kb_cache["text"] is not None and now - self._kb_cache["ts"] < 30:
+                return self._kb_cache["text"]
             items = list(self._knowledge)
-        if not items:
-            text = ""
-        else:
-            lines = "\n".join(f"- {k['fact']}" for k in items[-20:])
-            text = ("\n\n【群知识库（经事实校对+人工审核的群内沉淀事实，可信度高）】\n" + lines)
-        self._kb_cache.update({"text": text, "ts": now})
+            if not items:
+                text = ""
+            else:
+                lines = "\n".join(f"- {k['fact']}" for k in items[-20:])
+                text = ("\n\n【群知识库（经事实校对+人工审核的群内沉淀事实，可信度高）】\n" + lines)
+            self._kb_cache.update({"text": text, "ts": now})
         return text
 
     # ==================== 4. 用户画像（偏好习惯） ====================

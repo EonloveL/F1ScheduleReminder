@@ -91,6 +91,9 @@ class WeatherAPI:
         else:
             if start > now + timedelta(days=FORECAST_MAX_DAYS):
                 return {"error": f"超出{FORECAST_MAX_DAYS}天预报范围"}
+            # 预报默认只回7天：显式指定日期范围，覆盖 8-16 天窗口
+            params["start_date"] = start.strftime("%Y-%m-%d")
+            params["end_date"] = end.strftime("%Y-%m-%d")
             url = FORECAST_URL
 
         try:
@@ -353,7 +356,7 @@ class WeatherAPI:
                 if not dt:
                     continue
                 st = int((dt - timedelta(minutes=30)).timestamp())
-                dur = 3900 if s.get("type") == "race" else 7500  # 正赛约1.5h+，其余约2h余量
+                dur = 7500 if s.get("type") == "race" else 3900  # 正赛覆盖全场(~2h)，其余环节1h余量
                 en = int(dt.timestamp()) + dur
                 summ = self._window_summary(hourly, st, en, ref_start_ts=int(dt.timestamp()))
                 # 已结束环节：合并 OpenF1 实测（真实沥青温度，替代代理估算）

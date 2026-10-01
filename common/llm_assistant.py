@@ -142,7 +142,10 @@ class LLMAssistant:
         self.timeout = timeout
         self.max_search_rounds = max_search_rounds
         # 最近一次供应商级故障（402余额/404模型下线/429限流），供上层区分"查询失败"与"服务配置异常"
+        # 注意：并发问答下实例级 last_error 会串用户，正式读取走 qid 键控 get_error(qid)
         self.last_error: Optional[str] = None
+        self._error_by_qid: Dict[str, str] = {}
+        self._error_lock = _threading.Lock()
         # 不接受显式 temperature 的模型集合（kimi-k2.x/k3 强制 temperature=1，传值即 400）；
         # 首次 400 重试时记入，之后直接免传，省掉每次请求的浪费往返（2026-09-15 事故中浪费约40s）
         self._no_temp_models: set = set()
@@ -361,7 +364,7 @@ class LLMAssistant:
                     )
             except requests.RequestException as e:
                 logger.error(f"LLM[{provider}]请求异常: {e}")
-                self.last_error = f"{provider}: 请求异常 {e}"
+                self._set_error(f"{provider}: 请求异常 {e}")
                 return None
 
             if response.status_code != 200:
@@ -369,7 +372,7 @@ class LLMAssistant:
                 # 供应商级故障（402余额不足/404模型下线/429限流）记录下来供上层友好提示
                 if response.status_code in (402, 404, 429):
                     hint = {402: "余额不足", 404: "模型不存在或已下线", 429: "触发限流"}.get(response.status_code, "")
-                    self.last_error = f"{provider}: HTTP {response.status_code} {hint}"
+                    self._set_error(f"{provider}: HTTP {response.status_code} {hint}")
                 return None
 
             try:
@@ -451,6 +454,9 @@ class LLMAssistant:
                     continue
                 logger.warning(f"LLM[{provider}] 续写后仍被截断，发出已有内容并标注")
                 combined = (length_prefix + "\n" + truncated_text).strip()
+                if self._looks_like_preamble(combined) or self._looks_degenerate(combined):
+                    logger.warning(f"LLM[{provider}] 截断拼接结果仍为前言/退化，判定失败")
+                    return None
                 return combined + "\n\n（注：回答因长度限制可能被截断，可回复\"继续\"获取剩余内容）"
 
             # stop 但内容为空或仅为前言（搜索后未产出正文）：引导模型直接给分析，重试一次
@@ -504,9 +510,35 @@ class LLMAssistant:
                                else None)
 
         logger.warning(f"LLM[{provider}]联网搜索超过最大轮次")
-        return last_content if (last_content
-                                and not self._looks_like_preamble(last_content)
-                                and not self._looks_degenerate(last_content)) else None
+        # 轮次耗尽：若截断续写的前半段尚未拼回（后续轮带工具调用导致未走合并路径），在此补拼
+        final = last_content
+        if length_prefix:
+            if not final:
+                final = length_prefix
+            elif not final.startswith(length_prefix):
+                final = (length_prefix + "\n" + final).strip()
+        return final if (final
+                         and not self._looks_like_preamble(final)
+                         and not self._looks_degenerate(final)) else None
+
+    def _set_error(self, msg: str):
+        """记录供应商级故障：实例级兼容字段 + qid 键控（并发问答不串用户）"""
+        self.last_error = msg
+        qid = get_qid()
+        if qid:
+            with self._error_lock:
+                if len(self._error_by_qid) > 200:
+                    self._error_by_qid.clear()
+                self._error_by_qid[qid] = msg
+
+    def get_error(self, qid: str = None) -> Optional[str]:
+        """按 qid 取出并清除本次问答的供应商故障；无 qid 时回退实例级字段"""
+        if qid:
+            with self._error_lock:
+                err = self._error_by_qid.pop(qid, None)
+            if err:
+                return err
+        return self.last_error
 
     def _execute_tool(self, name: str, arguments_json, handlers: Dict[str, Any],
                       user_id: str = None, qid: str = None) -> str:
@@ -975,13 +1007,13 @@ class LLMAssistant:
                                          proxies={"http": None, "https": None})
             except requests.RequestException as e:
                 logger.error(f"L1取数[{provider}]请求异常: {e}")
-                self.last_error = f"{provider}: L1请求异常 {e}"
+                self._set_error(f"{provider}: L1请求异常 {e}")
                 return None, None
             if response.status_code != 200:
                 logger.error(f"L1取数[{provider}]请求失败: HTTP {response.status_code} - {response.text[:200]}")
                 if response.status_code in (402, 404, 429):
                     hint = {402: "余额不足", 404: "模型不存在或已下线", 429: "触发限流"}.get(response.status_code, "")
-                    self.last_error = f"{provider}: HTTP {response.status_code} {hint}"
+                    self._set_error(f"{provider}: HTTP {response.status_code} {hint}")
                 return None, None
             try:
                 data = response.json()
@@ -1092,13 +1124,13 @@ class LLMAssistant:
                                          proxies={"http": None, "https": None})
             except requests.RequestException as e:
                 logger.error(f"L1取数[{provider}]请求异常: {e}")
-                self.last_error = f"{provider}: L1请求异常 {e}"
+                self._set_error(f"{provider}: L1请求异常 {e}")
                 return None, None
             if response.status_code != 200:
                 logger.error(f"L1取数[{provider}]请求失败: HTTP {response.status_code} - {response.text[:200]}")
                 if response.status_code in (402, 404, 429):
                     hint = {402: "余额不足", 404: "模型不存在或已下线", 429: "触发限流"}.get(response.status_code, "")
-                    self.last_error = f"{provider}: HTTP {response.status_code} {hint}"
+                    self._set_error(f"{provider}: HTTP {response.status_code} {hint}")
                 return None, None
             try:
                 data = response.json()
@@ -1109,7 +1141,8 @@ class LLMAssistant:
                 return None, None
 
             tool_calls = message.get("tool_calls")
-            if not tool_calls or choice.get("finish_reason") == "stop":
+            # 仅当没有工具调用时才结束；部分兼容端点会同时返回 finish_reason=stop 和 tool_calls
+            if not tool_calls:
                 break
             messages.append(message)
             # 同轮多个数据工具并行执行（保序回填 tool 消息，不改变消息序列语义）；
@@ -1297,10 +1330,18 @@ class LLMAssistant:
         # L2 是成文层（数据已注入，禁止重新预测），推理无收益纯烧钱，默认 none；
         # reasoning_effort 仅 kimi 支持故按供应商限定
         if l2_provider == "kimi":
-            l2_extra["reasoning_effort"] = os.getenv("LLM_L2_REASONING", "none")
+            _re_eff = os.getenv("LLM_L2_REASONING", "none").strip().lower()
+            if _re_eff not in ("none", "low", "medium", "high"):
+                logger.warning(f"LLM_L2_REASONING 非法值 '{_re_eff}'，回退 none")
+                _re_eff = "none"
+            l2_extra["reasoning_effort"] = _re_eff
         if deep_mode:
             l2_model = os.getenv("LLM_DEEP_MODEL", "kimi-k3")
-            l2_extra = {"reasoning_effort": os.getenv("LLM_DEEP_REASONING", "high")}
+            _deep_eff = os.getenv("LLM_DEEP_REASONING", "high").strip().lower()
+            if _deep_eff not in ("none", "low", "medium", "high"):
+                logger.warning(f"LLM_DEEP_REASONING 非法值 '{_deep_eff}'，回退 high")
+                _deep_eff = "high"
+            l2_extra = {"reasoning_effort": _deep_eff}
             if not search_queries:
                 search_queries = ["媒体对该站升级件效果的技术评论"]
             logger.info(f"进入深度分析模式: model={l2_model} 强制联网")

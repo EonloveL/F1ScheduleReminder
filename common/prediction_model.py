@@ -30,6 +30,26 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+
+def _norm_surname(s: str) -> str:
+    """姓氏归一化：小写 + 去重音（Pérez→perez），用于跨源车手键匹配"""
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", (s or "").lower())
+                   if not unicodedata.combining(c))
+
+
+def _find_stint_driver(drivers: Dict[str, Any], driver_id: str) -> Dict[str, Any]:
+    """stint 数据键为 OpenF1 last_name（verstappen）或 Jolpica driverId（max_verstappen），
+    而模型 driver_id 为 Ergast 风格（max_verstappen）——双源键不一致，此处归一化匹配"""
+    d = drivers.get(driver_id)
+    if d is not None:
+        return d
+    target = _norm_surname(driver_id.split("_")[-1])
+    for k, v in drivers.items():
+        if _norm_surname(k) == target:
+            return v
+    return {}
+
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 MODEL_FILE = os.path.join(DATA_DIR, "prediction_model.json")
 
@@ -400,7 +420,7 @@ class RacePredictionModel:
                     drivers = st.get("drivers") or {}
                     meds = [d["best_stint_median_s"] for d in drivers.values()
                             if d.get("best_stint_median_s")]
-                    d = drivers.get(driver_id) or {}
+                    d = _find_stint_driver(drivers, driver_id)
                     if meds and d.get("best_stint_median_s"):
                         field_med = sorted(meds)[len(meds) // 2]
                         idxs.append(field_med / d["best_stint_median_s"] * 100)
@@ -411,7 +431,7 @@ class RacePredictionModel:
             for rd in recent:
                 try:
                     st = sa.get_race_stints(season, rd)
-                    d = (st.get("drivers") or {}).get(driver_id) or {}
+                    d = _find_stint_driver(st.get("drivers") or {}, driver_id)
                     if d.get("avg_deg_ms") is not None:
                         degs.append(d["avg_deg_ms"])
                 except Exception:
@@ -562,13 +582,17 @@ class RacePredictionModel:
                 up = -min(upgrades_map.get((rec["round"], f["team_key"]), 0), 6) / 6.0
                 tq = f["tm_gap_quali"] if f.get("tm_gap_quali") is not None else 0.0
                 tf = f["tm_gap_finish"] if f.get("tm_gap_finish") is not None else 0.0
+                _rp = f.get("similar_race_pace_idx") or f.get("race_pace_idx")
+                rp = _rp if _rp is not None else 100.0
+                td = f["tyre_deg_ms"] if f.get("tyre_deg_ms") is not None else 0.0
                 exp_q = (w[0] + w[1] * f["stand_pos"] + w[2] * fq
                          + w[3] * (f["circuit_hist_q"] or fq)
                          + w[4] * f["type_affinity"] + w[5] * up
                          + w[6] * tq)
+                # 与 predict 的 9 项正赛公式保持一致（此前漏 a[7]/a[8]，回测指标未度量实际服役模型）
                 exp_f = (a[0] + a[1] * f["stand_pos"] + a[2] * ff
                          + a[3] * e["grid"] + a[4] * f["type_affinity"] + a[5] * up
-                         + a[6] * tf)
+                         + a[6] * tf + a[7] * rp + a[8] * td)
                 # 与积分榜先验混合（λ 搜索确定，抗模型过拟合）
                 exp_f = BLEND_LAMBDA * exp_f + (1 - BLEND_LAMBDA) * f["stand_pos"]
                 feats.append((e, exp_q, exp_f))
@@ -668,10 +692,12 @@ class RacePredictionModel:
         if _hit and _t.time() - _hit[0] < PREDICT_CACHE_TTL:
             logger.debug(f"预测缓存命中: {season} R{round_num}")
             return dict(_hit[1])  # 浅拷贝防调用方（f1_tools 追加 circuit_profile 等）改写缓存
-        # 缓存上限：超出时淘汰最旧条目（防长期运行内存膨胀）
+        # 缓存上限：超出时淘汰最旧条目（防长期运行内存膨胀）；同步淘汰对应 single-flight 锁
         if len(self._predict_cache) >= 50:
             oldest = min(self._predict_cache, key=lambda k: self._predict_cache[k][0])
             self._predict_cache.pop(oldest, None)
+            with self._predict_locks_guard:
+                self._predict_locks.pop(oldest, None)
 
         # single-flight：同一 (season, round, premises) 并发计算合并，
         # 后到者拿锁后先复查缓存（先到者可能已算完写入），未命中才自己算

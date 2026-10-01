@@ -92,6 +92,7 @@ class TelemetrySession:
         self.drivers = self._load_drivers()          # {tla: {name, team, color, number}}
         self._car_df: Dict[str, Any] = {}            # {tla: DataFrame}
         self._lap_windows: Dict[str, List[Dict]] = {}  # {tla: [{no, time, start, end}]}
+        self._session_start_utc = None               # CarData 流首条 entry 换算；流为空时保持 None
         self.event_name = self.path.split("/")[1].replace("_", " ")
 
     # ==================== 索引与下载 ====================
@@ -398,8 +399,11 @@ class TelemetrySession:
         logger.info(f"✓ 遥测数据加载: {self.event_name} {self.session_type}, "
                     f"{len(self._car_df)} 位车手")
 
-        # 圈窗口换算为UTC
+        # 圈窗口换算为UTC（CarData 流为空时 _session_start_utc 为 None，无法换算，跳过）
         self._lap_windows = {}
+        if self._session_start_utc is None:
+            logger.warning(f"遥测 CarData 流为空，圈窗口不可用: {self.event_name} {self.session_type}")
+            return
         for tla, lap_list in getattr(self, "_raw_laps", {}).items():
             wins = []
             for l in sorted(lap_list, key=lambda x: x["no"]):

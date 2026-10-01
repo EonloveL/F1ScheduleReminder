@@ -265,15 +265,81 @@ class F1APIDevProvider(BaseF1Provider):
         return converted
     
     def get_race_results(self, season: int, round_num: int) -> Optional[Dict[str, Any]]:
-        """获取比赛结果"""
+        """获取比赛结果（转换为Ergast兼容格式，含 Results 键）"""
         url = f"{self.BASE_URL}/{season}/{round_num}/race"
         data = self._make_request(url)
-        
+
         if not data or "races" not in data or not data["races"]:
             logger.warning(f"[{self.name}] 无法获取比赛结果 {season} 第 {round_num} 站")
             return None
-        
-        return self._convert_race_format(data["races"][0], season)
+
+        race = data["races"][0]
+        raw_results = race.get("results") or []
+        if not raw_results:
+            # 无成绩条目视为数据未就绪，交给 Jolpica 兜底（避免缓存空壳数据）
+            logger.warning(f"[{self.name}] {season} 第 {round_num} 站成绩条目为空")
+            return None
+
+        converted = self._convert_race_format(race, season)
+        converted["Results"] = self._convert_results_to_ergast(raw_results)
+        return converted
+
+    @staticmethod
+    def _convert_results_to_ergast(raw_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """f1api.dev 正赛成绩条目 → Ergast 风格 Results（send_race_result/圈速纪录提取均依赖该结构）"""
+        # 全场最快圈：取所有条目 fastLap 的最小值，给对应条目标 rank=1
+        def _lap_secs(t):
+            try:
+                m, s = str(t).split(":")
+                return int(m) * 60 + float(s)
+            except (ValueError, TypeError):
+                return None
+
+        best = None
+        for e in raw_results:
+            secs = _lap_secs(e.get("fastLap"))
+            if secs is not None and (best is None or secs < best):
+                best = secs
+
+        results = []
+        for e in raw_results:
+            driver = e.get("driver") or {}
+            team = e.get("team") or {}
+            retired = e.get("retired")
+            time_v = e.get("time") or ""
+            if retired:
+                status = str(retired)
+            elif time_v and str(time_v).startswith("+"):
+                status = str(time_v)  # 套圈/落后名次（+1 Lap 等），Ergast 语义一致
+            else:
+                status = "Finished"
+
+            entry = {
+                "position": str(e.get("position", "")),
+                "points": str(e.get("points", "0")),
+                "grid": str(e.get("grid", "")),
+                "status": status,
+                "Driver": {
+                    "driverId": e.get("driverId") or driver.get("driverId", ""),
+                    "code": driver.get("shortName", ""),
+                    "givenName": driver.get("name", ""),
+                    "familyName": driver.get("surname", ""),
+                },
+                "Constructor": {
+                    "constructorId": e.get("teamId") or team.get("teamId", ""),
+                    "name": team.get("teamName", ""),
+                },
+            }
+            if not retired and time_v:
+                entry["Time"] = {"time": str(time_v)}
+            fl = e.get("fastLap")
+            if fl:
+                flap = {"Time": {"time": str(fl)}}
+                if best is not None and _lap_secs(fl) == best:
+                    flap["rank"] = "1"
+                entry["FastestLap"] = flap
+            results.append(entry)
+        return results
     
     def get_standings(self, season: int) -> Dict[str, Any]:
         """获取积分榜（转换为Ergast兼容格式，与Jolpica输出统一）"""

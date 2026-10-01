@@ -62,14 +62,17 @@ class RatingsStore:
     # ---- 跨进程文件锁（无第三方依赖：O_CREAT|O_EXCL 附加创建） ----
 
     def _acquire_filelock(self, timeout: float = 10.0):
+        """返回唯一 token 表示持锁；None 表示未获取（调用方降级处理）"""
         import time as _t
+        import uuid
+        token = f"{os.getpid()}:{uuid.uuid4().hex}"
         deadline = _t.time() + timeout
         while True:
             try:
                 fd = os.open(self._flock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                os.write(fd, str(os.getpid()).encode())
+                os.write(fd, token.encode())
                 os.close(fd)
-                return True
+                return token
             except FileExistsError:
                 # 陈旧锁兜底：超时未释放（持锁进程崩溃）则强制接管
                 try:
@@ -80,27 +83,33 @@ class RatingsStore:
                     pass
                 if _t.time() > deadline:
                     logger.warning("评分文件锁获取超时，降级为无锁写入")
-                    return False
+                    return None
                 _t.sleep(0.05)
             except OSError:
-                return False
+                return None
 
-    def _release_filelock(self, held: bool):
-        if held:
-            try:
-                os.remove(self._flock_path)
-            except OSError:
-                pass
+    def _release_filelock(self, token):
+        """仅当锁文件仍是自己的 token 时才删除：陈旧兜底接管后锁可能已被他人重持，
+        无 token 校验的释放会误删他人锁，导致临界区交错"""
+        if not token:
+            return
+        try:
+            with open(self._flock_path, "r", encoding="utf-8", errors="ignore") as f:
+                if f.read().strip() != token:
+                    return
+            os.remove(self._flock_path)
+        except OSError:
+            pass
 
     @contextmanager
     def _xlock(self):
         """进程内锁 + 跨进程文件锁 组合临界区"""
         self._lock.acquire()
-        held = self._acquire_filelock()
+        token = self._acquire_filelock()
         try:
             yield
         finally:
-            self._release_filelock(held)
+            self._release_filelock(token)
             self._lock.release()
 
     def _load(self) -> Dict[str, Any]:
@@ -315,7 +324,9 @@ class RatingsStore:
 
         def _race_start(race):
             try:
-                d = datetime.fromisoformat(f"{race.get('date', '')}T{race.get('time') or '13:00:00Z'}")
+                # fromisoformat 在 Python<3.11 不接受 "Z" 后缀，统一替换
+                t = (race.get('time') or '13:00:00Z').replace("Z", "+00:00")
+                d = datetime.fromisoformat(f"{race.get('date', '')}T{t}")
                 return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
             except (ValueError, TypeError):
                 return None

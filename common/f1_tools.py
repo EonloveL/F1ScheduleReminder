@@ -288,7 +288,11 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
                     continue
             except Exception:
                 continue
-            res = f1_api.get_session_results(int(race["round"]), "race", season=q_season)
+            try:
+                round_num = int(race["round"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            res = f1_api.get_session_results(round_num, "race", season=q_season)
             if res and res.get("entries"):
                 out.append({"round": race["round"], "race": res.get("race_name"),
                             "date": race.get("date"),
@@ -571,13 +575,17 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         }
 
     _pred_model = None  # 进程内单例（模型权重/赛季数据集驻留内存，避免每次重建）
+    import threading as _threading
+    _pred_model_lock = _threading.Lock()  # 首次构建为分钟级重活，加锁防并发重复构建
 
     def _race_prediction(gp="", premises_penalties=None, premises_standins=None):
         """分站排位/正赛统计模型预测（模型计算，AI 只呈现）"""
         nonlocal _pred_model
         from common.prediction_model import RacePredictionModel
         if _pred_model is None:
-            _pred_model = RacePredictionModel(f1_api, f1cosmos)
+            with _pred_model_lock:
+                if _pred_model is None:
+                    _pred_model = RacePredictionModel(f1_api, f1cosmos)
         premises = {}
         if premises_penalties:
             premises["penalties"] = premises_penalties
@@ -700,7 +708,12 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
             import re as _re
             m = _re.search(r"^[Rr]\s?0*(\d{1,2})$", str(gp).strip())
             if m:
-                race = next((r for r in schedule if int(r.get("round", 0)) == int(m.group(1))), None)
+                def _round_eq(r, target):
+                    try:
+                        return int(r.get("round", 0)) == target
+                    except (TypeError, ValueError):
+                        return False
+                race = next((r for r in schedule if _round_eq(r, int(m.group(1)))), None)
             else:
                 race = find_race_by_circuit(schedule, str(gp))
         else:

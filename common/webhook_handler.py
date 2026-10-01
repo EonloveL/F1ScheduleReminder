@@ -225,7 +225,8 @@ def register_webhook(app: Flask, webhook_secret: str, command_client, qq_bot=Non
             elif event_type == "C2C_MESSAGE_CREATE":
                 from botpy.message import C2CMessage
                 msg = C2CMessage(api=api, event_id=event_id, data=event_data)
-                msg.author.member_openid = author_id
+                if author_id:
+                    msg.author.member_openid = author_id
                 loop.run_until_complete(_command_client.on_group_at_message_create(msg))
 
             elif event_type == "GROUP_ADD_ROBOT" and _qq_bot:

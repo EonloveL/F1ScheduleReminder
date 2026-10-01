@@ -148,7 +148,8 @@ class LiveAggregator:
         session = self._cached("session", TTL["session"], lambda: self.api.get_current_session())
         if not session:
             result = {"live": False, "updated": datetime.now(timezone.utc).isoformat()}
-            if self._race_session_in_progress():
+            # 赛程判断走 60s 缓存：面板每 3s 轮询，直查 f1api.dev 会打爆源站并阻塞 worker
+            if self._cached("race_in_progress", 60, self._race_session_in_progress):
                 result["race_in_progress"] = True
                 result["needs_openf1_auth"] = not getattr(self.api, "_auth_enabled", False)
             return result

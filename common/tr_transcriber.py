@@ -60,6 +60,7 @@ class TeamRadioTranscriber:
         return self._model
 
     MAX_PENDING = 30  # 待转写队列上限，超出丢弃新任务（防 TR 突发积压拖垮小内存机器）
+    MAX_RESULTS = 500  # 结果缓存上限（FIFO 淘汰最旧条目，防长跑进程内存无限增长）
 
     def submit(self, url: str):
         """提交一条 TR 音频转写任务（幂等：同一 URL 只处理一次）"""
@@ -72,6 +73,9 @@ class TeamRadioTranscriber:
             if pending >= self.MAX_PENDING:
                 logger.warning(f"TR转写队列已满({pending})，丢弃新任务")
                 return
+            if len(self._results) >= self.MAX_RESULTS:
+                oldest = next(iter(self._results))
+                self._results.pop(oldest, None)
             self._results[url] = {"status": "pending"}
         self._executor.submit(self._transcribe, url)
 

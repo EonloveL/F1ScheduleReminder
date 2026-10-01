@@ -270,7 +270,7 @@ HELP_MARKDOWN = """## 🏎️ F1机器人指令面板
 
 
 _msg_seq_counters = {}
-_msg_seq_lock = None  # 在 _threading 导入后初始化（见下）
+_msg_seq_lock = _threading.Lock()
 _msg_seq_ts = {}      # msg_id -> 最后使用时间（TTL 清理用）
 _MSG_SEQ_TTL = 3600   # 回复链1小时内有效，超时淘汰防内存无限增长
 
@@ -292,9 +292,6 @@ def _next_msg_seq(msg_id: str) -> int:
     加锁防并发重复分配（webhook每事件独立线程）；TTL淘汰防计数器无限增长"""
     import itertools
     import time as _t
-    global _msg_seq_lock
-    if _msg_seq_lock is None:
-        _msg_seq_lock = _threading.Lock()
     now = _t.time()
     with _msg_seq_lock:
         # 惰性淘汰过期条目
@@ -830,11 +827,9 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                 logger.info(f"已注册迟到投递 (用户 {member_openid[:8]}...)")
 
             try:
-                loop = _asyncio.get_event_loop()
+                loop = _asyncio.get_running_loop()
                 t_start = _time.time()
                 logger.info(f"LLM问答开始 qid={qid} (用户 {member_openid[:8]}...): {full_question[:60]}")
-                # 清空共享的供应商错误标记，避免读到并发用户的故障状态
-                llm.last_error = None
                 fut = loop.run_in_executor(_LLM_EXECUTOR, _ask_with_slot)
                 answer = None
                 timed_out = False
@@ -914,7 +909,9 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         logger.warning(f"纠错候选入队失败: {ke}")
             else:
                 # 区分供应商级故障（余额/模型下线/限流）与一般失败，方便管理员排查
-                provider_err = getattr(llm, "last_error", None)
+                # qid 键控读取：并发问答下实例级 last_error 会被其他用户覆盖
+                provider_err = (llm.get_error(qid) if hasattr(llm, "get_error")
+                                else getattr(llm, "last_error", None))
                 try:
                     if timed_out:
                         # 硬超时：任务已被取消（轮次边界停止），如有部分内容会迟到补发
@@ -969,6 +966,8 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                     urls.append(u)
             if not urls:
                 await reply_text(message, "⚠️ 图片地址获取失败，请重新发送")
+                # 即时失败不占冷却额度
+                _llm_cooldowns.pop(member_openid, None)
                 return
 
             logger.info(f"收到图片识别请求: {len(urls)} 张图 (from {member_openid})")
@@ -1022,7 +1021,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                 fut.add_done_callback(_deliver)
 
             try:
-                loop = _asyncio.get_event_loop()
+                loop = _asyncio.get_running_loop()
                 t_start = _time.time()
                 fut = loop.run_in_executor(_LLM_EXECUTOR, _vision_with_slot)
                 try:
@@ -1102,7 +1101,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
             content = (message.content or "").strip()
             group_openid = getattr(message, 'group_openid', None)
             member_openid = getattr(getattr(message, "author", None), "member_openid", None)
-            is_dm = not hasattr(message, 'group_openid')
+            is_dm = not group_openid  # 与上方 getattr 探测保持一致（属性存在但为 None 时也按私聊处理）
 
             # 解析指令（兼容带/和不带/两种格式）
             cmd, arg = _parse_command(content)
@@ -1201,7 +1200,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                     import asyncio as _aio
                     from functools import partial as _partial
                     from common.f1_api import find_race_by_circuit
-                    loop = _aio.get_event_loop()
+                    loop = _aio.get_running_loop()
                     target_year = year or SEASON
 
                     schedule = await loop.run_in_executor(None, _partial(f1_api.get_schedule_for_year, target_year))
@@ -1282,7 +1281,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                 elif cmd == "/weather":
                     # 分站天气/赛道温度/风速风向：/weather [地点/赛道/R几]，缺省下一站
                     import asyncio as _aio
-                    loop = _aio.get_event_loop()
+                    loop = _aio.get_running_loop()
 
                     def _fetch_weather():
                         from common.weather_api import WeatherAPI
@@ -1317,7 +1316,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         await reply_text(message, "F1Cosmos数据源未启用")
                         return
                     import asyncio as _aio
-                    loop = _aio.get_event_loop()
+                    loop = _aio.get_running_loop()
 
                     # 支持组合查询：年份 + 轮次(R5/第5站) + 车队 + 地点
                     # 如 /upgrades 蒙扎 2024、/upgrades R5、/upgrades 法拉利 蒙扎 2024
@@ -1371,7 +1370,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         await reply_text(message, "F1Cosmos数据源未启用")
                         return
                     import asyncio as _aio
-                    loop = _aio.get_event_loop()
+                    loop = _aio.get_running_loop()
 
                     info = parse_upgrade_query(arg)
                     season = info["year"] or SEASON
@@ -1408,7 +1407,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                     import asyncio as _aio
                     import re as _re
                     from functools import partial as _partial
-                    loop = _aio.get_event_loop()
+                    loop = _aio.get_running_loop()
                     # 可选年份：/pu 维斯塔潘 2023（历史赛季为该赛季末FIA累计用量快照）
                     pu_year = None
                     pu_q = (arg or "").strip()
@@ -1429,14 +1428,14 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         return
                     import asyncio as _aio
                     from functools import partial as _partial
-                    loop = _aio.get_event_loop()
+                    loop = _aio.get_running_loop()
                     text, md = await loop.run_in_executor(None, _partial(f1cosmos.format_destructors, arg, SEASON))
                     await reply_md(message, text, md)
 
                 elif cmd == "/predict":
                     # 统计模型预测（直接调模型，不走LLM；排位+正赛名次+概率）
                     import asyncio as _aio
-                    loop = _aio.get_event_loop()
+                    loop = _aio.get_running_loop()
 
                     def _fetch_prediction():
                         from common.prediction_model import RacePredictionModel
@@ -1504,8 +1503,8 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                     if not RATING_ENABLED or not ratings_store:
                         await reply_text(message, "车手评分功能未启用")
                         return
-                    races = ratings_store._data["races"]
-                    open_races = [(k, r) for k, r in races.items() if not r.get("closed")]
+                    races = list(ratings_store._data.get("races", {}).items())  # 快照防迭代期并发修改
+                    open_races = [(k, r) for k, r in races if not r.get("closed")]
                     if not open_races:
                         await reply_text(message, "当前没有进行中的车手评分\n比赛周会自动创建本场投票，正赛开始1小时后开放打分!")
                         return
@@ -1515,7 +1514,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                     # 比赛周预创建条目：未到开启时刻（正赛开始+1h）时提示开放时间，链接可先收藏
                     pending_tip = ""
                     try:
-                        from datetime import datetime, timezone
+                        from datetime import timezone
                         from zoneinfo import ZoneInfo
                         _oa = ratings_store.race_open_at(race)
                         if _oa and datetime.now(timezone.utc) < _oa:
@@ -1567,7 +1566,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         from common.f1_api import find_race_by_circuit
                         import asyncio as _a2
                         from functools import partial as _p2
-                        loop2 = _a2.get_event_loop()
+                        loop2 = _a2.get_running_loop()
                         schedule = await loop2.run_in_executor(None, _p2(f1_api.get_schedule_for_year, SEASON))
                         race_hit = find_race_by_circuit(schedule, arg) if schedule else None
                         if race_hit:
@@ -1576,7 +1575,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                             await reply_text(message, f"未找到「{arg}」的评分记录")
                             return
                     else:
-                        races = ratings_store._data["races"]
+                        races = dict(ratings_store._data.get("races", {}))  # 快照防迭代期并发修改
                         if not races:
                             await reply_text(message, "暂无评分记录")
                             return
@@ -1670,6 +1669,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                             await reply_text(message, f"未知环节「{arg}」\n可选: fp1/fp2/fp3/qualy/sq/sprint/race")
                             return
                         session_info = None
+                        session_year = None
                         schedule = f1_api.get_schedule()
                         if not schedule:
                             await reply_text(message, "⚠️ 赛程数据暂时不可用，请稍后重试")
@@ -1683,15 +1683,29 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                                     break
                             if session_info:
                                 break
+                        # 赛季初（1-3月）当前赛季尚无已结束环节时，回退上一赛季赛程
+                        if not session_info and now_utc.month <= 3:
+                            prev_schedule = f1_api.get_schedule_for_year(now_utc.year - 1)
+                            for race in reversed(prev_schedule or []):
+                                for s in f1_api.get_all_sessions(race):
+                                    if s['type'] == session_type and s['datetime'] < now_utc:
+                                        session_info = s
+                                        break
+                                if session_info:
+                                    session_year = now_utc.year - 1
+                                    break
                     else:
                         session_info = f1_api.get_last_completed_session()
+                        session_year = None
 
                     if not session_info:
                         await reply_text(message, "未找到已结束的比赛环节")
                         return
 
                     await reply_text(message, f"🔍 正在获取 {session_info['race_name']} {session_info['name']} 成绩...")
-                    result = f1_api.get_session_results(int(session_info['round']), session_info['type'])
+                    # 跨年回退时显式传赛季，避免默认当前赛季查不到历史成绩
+                    result = f1_api.get_session_results(int(session_info['round']), session_info['type'],
+                                                        season=session_year)
                     if result and result.get("entries"):
                         text, md = QQGroupBot.format_session_result(result)
                         await reply_md(message, text, md)

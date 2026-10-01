@@ -380,7 +380,10 @@ def _get_telemetry_session(year: int, round_num: str, session_type: str):
 @app.route("/telemetry/api/meta")
 def telemetry_meta():
     """环节元数据：车手列表（TLA/姓名/车队/配色）+ 每人圈数（只解析圈速流，不加载遥测）"""
-    year = int(request.args.get("year", 0))
+    year_arg = request.args.get("year", "")
+    if not year_arg.isdigit():
+        return jsonify({"error": "year 参数非法"}), 400
+    year = int(year_arg)
     rnd = request.args.get("round", "")
     sess = request.args.get("session", "race")
     try:
@@ -407,7 +410,10 @@ def telemetry_meta():
 @app.route("/telemetry/api/compare")
 def telemetry_compare():
     """遥测对比数据：drivers=NOR,VER&lap=圈号或fastest"""
-    year = int(request.args.get("year", 0))
+    year_arg = request.args.get("year", "")
+    if not year_arg.isdigit():
+        return jsonify({"error": "year 参数非法"}), 400
+    year = int(year_arg)
     rnd = request.args.get("round", "")
     sess = request.args.get("session", "race")
     tlas = [t.strip().upper() for t in request.args.get("drivers", "").split(",") if t.strip()][:4]

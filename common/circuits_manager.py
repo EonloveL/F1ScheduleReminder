@@ -92,8 +92,11 @@ class CircuitsManager:
         """重新加载数据文件"""
         self.circuits_data = self._load_data()
 
+    # 备份保留份数上限（每次保存都产生时间戳备份，无上限会无限增长）
+    MAX_BACKUPS = 20
+
     def _save_data(self) -> bool:
-        """保存数据（写前备份原文件）"""
+        """保存数据（写前备份原文件；tmp+os.replace 原子写防中断截断）"""
         try:
             if os.path.exists(self.data_file):
                 os.makedirs(self.backup_dir, exist_ok=True)
@@ -101,9 +104,19 @@ class CircuitsManager:
                 backup_path = os.path.join(self.backup_dir, f"circuits_data_{stamp}.json")
                 shutil.copy2(self.data_file, backup_path)
                 logger.info(f"原赛道数据已备份: {backup_path}")
+                # 备份轮转：仅保留最新 MAX_BACKUPS 份
+                backups = sorted(f for f in os.listdir(self.backup_dir)
+                                 if f.startswith("circuits_data_") and f.endswith(".json"))
+                for old in backups[:-self.MAX_BACKUPS]:
+                    try:
+                        os.remove(os.path.join(self.backup_dir, old))
+                    except OSError:
+                        pass
 
-            with open(self.data_file, 'w', encoding='utf-8') as f:
+            tmp = self.data_file + ".tmp"
+            with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(self.circuits_data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, self.data_file)
             logger.info("✓ 赛道数据已保存")
             return True
         except Exception as e:

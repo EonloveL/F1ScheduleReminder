@@ -92,6 +92,12 @@ class TeamStrengthAnalyzer:
         tire_deg_by_team: Dict[str, List[float]] = {}
         try:
             from .stint_analysis import StintAnalyzer
+            from .prediction_model import _norm_surname
+            # stint 键为 OpenF1 last_name（verstappen）而 drv_team 键为 Ergast driver_id
+            # （max_verstappen）——预建归一化姓氏索引做跨源匹配
+            surname_team = {}
+            for k, v in drv_team.items():
+                surname_team.setdefault(_norm_surname(k.split("_")[-1]), v)
             sa = StintAnalyzer(self.f1_api, cache=self.cache)
             for rd in last_rounds:
                 st = sa.get_race_stints(self.season, rd)
@@ -99,7 +105,7 @@ class TeamStrengthAnalyzer:
                     deg = d.get("avg_deg_ms")
                     if deg is None:
                         continue
-                    tk2 = drv_team.get(did)
+                    tk2 = drv_team.get(did) or surname_team.get(_norm_surname(did))
                     if tk2:
                         tire_deg_by_team.setdefault(tk2, []).append(deg)
         except Exception as e:

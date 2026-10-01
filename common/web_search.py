@@ -14,8 +14,8 @@ F1赛程提醒机器人 - 客户端联网搜索（为无内建联网能力的供
 import json
 import logging
 import os
+import threading
 from typing import Any, Dict, List, Optional
-
 import requests
 
 logger = logging.getLogger(__name__)
@@ -104,13 +104,16 @@ class WebSearchClient:
 
 
 _shared: Optional[WebSearchClient] = None
+_shared_lock = threading.Lock()
 
 
 def get_web_searcher() -> WebSearchClient:
-    """进程级共享实例"""
+    """进程级共享实例（双重检查锁，防并发重复构造）"""
     global _shared
     if _shared is None:
-        _shared = WebSearchClient()
+        with _shared_lock:
+            if _shared is None:
+                _shared = WebSearchClient()
     return _shared
 
 

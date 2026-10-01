@@ -78,8 +78,9 @@ class F1NewsCollector:
 
     def mark_pushed(self, ts: float = None, items: List[Dict[str, Any]] = None):
         """推进推送水位 + 记录本批主题指纹（跨批降权用）"""
+        ts = ts or time.time()
         state = self._load_state()
-        state["last_push_ts"] = ts or time.time()
+        state["last_push_ts"] = ts
         if items:
             topics = [t for t in state.get("topics", [])
                       if ts - t[0] < TOPIC_MEMORY_H * 3600]

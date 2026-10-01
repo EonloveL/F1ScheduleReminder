@@ -338,60 +338,28 @@ class OpenF1API:
         # Caddy 静态服务：/av{ver}/drivers/{surname}.png（绕过 gunicorn，见 Caddyfile）
         return f"![pic#{px}px #{px}px]({base}/av{_AVATAR_PATH_VER}/drivers/{surname}.png)"
 
-
-# ==================== 模块级头像便捷入口 ====================
-
-# 头像 URL 路径版本：QQ 图片代理按 URL 长期缓存（含失败结果与旧图片内容），
-# 每次头像内容批量更新必须递增版本号破缓存。URL 前缀为 /av{版本号}/（Caddy 静态直出）。
-_AVATAR_PATH_VER = "8"
-
-
-def get_avatar_md(driver_name: str, px: int = 28) -> str:
-    """按车手姓名生成 QQ Markdown 头像语法（未命中/失败返回空串，绝不抛异常）"""
-    try:
-        return OpenF1API.avatar_md(None, driver_name, px)
-    except Exception:
-        return ""
-
-
-def get_team_icon_md(team_name: str, px: int = 28) -> str:
-    """按车队名生成 QQ Markdown 车队图标语法（打包静态图标，未命中返回空串）"""
-    if not team_name:
-        return ""
-    try:
-        from .f1cosmos_api import canonical_team_key
-        key = canonical_team_key(str(team_name))
-        if not key:
-            return ""
-        base = (os.getenv("AVATAR_BASE_URL") or os.getenv("RATING_BASE_URL")
-                or "https://your-domain.example.com").rstrip("/")
-        # Caddy 静态服务：/av{ver}/teams/{key}.png（绕过 gunicorn，见 Caddyfile）
-        return f"![pic#{px}px #{px}px]({base}/av{_AVATAR_PATH_VER}/teams/{key}.png)"
-    except Exception:
-        return ""
-    
     def format_weather_for_chat(self, weather: Dict[str, Any]) -> str:
         """
         格式化天气数据为群聊消息
-        
+
         Args:
             weather: 天气数据
-            
+
         Returns:
             格式化后的消息
         """
         if not weather:
             return "暂无天气数据"
-        
+
         air_temp = weather.get("air_temperature", "N/A")
         track_temp = weather.get("track_temperature", "N/A")
         humidity = weather.get("humidity", "N/A")
         rainfall = weather.get("rainfall", 0)
         wind_speed = weather.get("wind_speed", "N/A")
         pressure = weather.get("pressure", "N/A")
-        
+
         rain_status = "降雨中" if rainfall else "无降雨"
-        
+
         return (
             f"赛道天气:\n"
             f"气温: {air_temp}°C\n"
@@ -401,24 +369,24 @@ def get_team_icon_md(team_name: str, px: int = 28) -> str:
             f"风速: {wind_speed}m/s\n"
             f"降雨: {rain_status}"
         )
-    
+
     def format_race_control_event(self, event: Dict[str, Any]) -> str:
         """
         格式化赛事控制事件为群聊消息
-        
+
         Args:
             event: 赛事控制事件
-            
+
         Returns:
             格式化后的消息
         """
         if not event:
             return ""
-        
+
         category = event.get("category", "")
         message = event.get("message", "")
         flag = event.get("flag", "")
-        
+
         # 根据不同类别格式化
         if category == "Flag":
             flag_emojis = {
@@ -432,34 +400,34 @@ def get_team_icon_md(team_name: str, px: int = 28) -> str:
             }
             emoji = flag_emojis.get(flag, "")
             return f"{emoji} {message}"
-        
+
         elif category == "SafetyCar":
             return f" {message}"
-        
+
         elif category == "CarEvent":
             return f" {message}"
-        
+
         else:
             return f"{message}"
-    
+
     def format_fastest_lap(self, lap: Dict[str, Any], driver_name: str = None) -> str:
         """
         格式化最快圈速为群聊消息
-        
+
         Args:
             lap: 圈速数据
             driver_name: 车手姓名
-            
+
         Returns:
             格式化后的消息
         """
         if not lap:
             return "暂无最快圈速数据"
-        
+
         driver_num = lap.get("driver_number", "N/A")
         lap_time = lap.get("lap_duration", 0)
         lap_num = lap.get("lap_number", "N/A")
-        
+
         # 格式化圈速时间
         if lap_time:
             minutes = int(lap_time // 60)
@@ -467,7 +435,7 @@ def get_team_icon_md(team_name: str, px: int = 28) -> str:
             time_str = f"{minutes}:{seconds:05.2f}"
         else:
             time_str = "N/A"
-        
+
         if driver_name:
             return f"⚡ 最快圈速: {driver_name} (#{driver_num}) - {time_str} (第{lap_num}圈)"
         else:
@@ -559,6 +527,39 @@ def get_team_icon_md(team_name: str, px: int = 28) -> str:
                 recent = (end, s)
 
         return active or (recent[1] if recent else None)
+
+
+
+# ==================== 模块级头像便捷入口 ====================
+
+# 头像 URL 路径版本：QQ 图片代理按 URL 长期缓存（含失败结果与旧图片内容），
+# 每次头像内容批量更新必须递增版本号破缓存。URL 前缀为 /av{版本号}/（Caddy 静态直出）。
+_AVATAR_PATH_VER = "8"
+
+
+def get_avatar_md(driver_name: str, px: int = 28) -> str:
+    """按车手姓名生成 QQ Markdown 头像语法（未命中/失败返回空串，绝不抛异常）"""
+    try:
+        return OpenF1API.avatar_md(None, driver_name, px)
+    except Exception:
+        return ""
+
+
+def get_team_icon_md(team_name: str, px: int = 28) -> str:
+    """按车队名生成 QQ Markdown 车队图标语法（打包静态图标，未命中返回空串）"""
+    if not team_name:
+        return ""
+    try:
+        from .f1cosmos_api import canonical_team_key
+        key = canonical_team_key(str(team_name))
+        if not key:
+            return ""
+        base = (os.getenv("AVATAR_BASE_URL") or os.getenv("RATING_BASE_URL")
+                or "https://your-domain.example.com").rstrip("/")
+        # Caddy 静态服务：/av{ver}/teams/{key}.png（绕过 gunicorn，见 Caddyfile）
+        return f"![pic#{px}px #{px}px]({base}/av{_AVATAR_PATH_VER}/teams/{key}.png)"
+    except Exception:
+        return ""
 
 
 # 兼容旧代码，提供统一接口
