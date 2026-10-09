@@ -319,6 +319,10 @@ def _next_msg_seq(msg_id: str) -> int:
 # 靠它才能送达——否则答案算出来也发不出去（2026-09-15 事故：qid=4a6f02 答案被丢弃）
 _proactive_send_hook = None
 
+# 图片发送后端钩子（同理必须由 create_command_client 注入闭包 qq_bot——
+# 模块级 reply_image 无权访问该闭包）
+_reply_image_backend = None
+
 
 def _is_msg_id_expired(err) -> bool:
     """判定 QQ 被动回复消息过期错误。
@@ -352,6 +356,35 @@ async def reply_md(message, text: str, md: str):
             return
         logger.warning(f"Markdown回复失败，降级纯文本: {e}")
         await reply_text(message, text)
+
+
+async def reply_image(message, image_url: str, content: str = "📊 统计图"):
+    """图片回复（群聊/私聊自动路由，被动回复绑定 msg_id 省主动额度）。
+
+    指令里直调 qq_bot.send_image_url 是群广播，私聊发指令图片会串到群聊。
+    本函数按消息来源路由：私聊→v2/users/{openid}，群聊→v2/groups/{group_openid}，
+    均带 msg_id 被动回复。"""
+    is_dm = not hasattr(message, 'group_openid')
+    if is_dm:
+        openid = getattr(message, 'openid', None) or getattr(
+            getattr(message, "author", None), "id", None) or getattr(
+            getattr(message, "author", None), "member_openid", None) or getattr(
+            getattr(message, "author", None), "user_openid", None)
+    else:
+        openid = getattr(message, 'group_openid', None)
+    if not openid:
+        logger.warning("reply_image 无法确定目标 openid")
+        return
+    ok = False
+    if _reply_image_backend:
+        ok = _reply_image_backend(openid, image_url, content, is_dm,
+                                  message.id, _next_msg_seq(message.id))
+        if ok is False:
+            # msg_id 过期（被动回复约5分钟有效，图表生成可能超时）→ 主动发送兜底
+            logger.warning(f"图片被动回复失败（msg_id过期?），主动发送兜底: {image_url[-40:]}")
+            _reply_image_backend(openid, image_url, content, is_dm, None, None)
+    else:
+        logger.warning("reply_image 后端未注入（create_command_client 未初始化）")
 
 
 def _split_lines(s: str, limit: int) -> list:
@@ -507,6 +540,16 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
 
     global _proactive_send_hook
     _proactive_send_hook = _proactive_send
+
+    # 图片发送后端注入（闭包 qq_bot；模块级 reply_image 无权访问该闭包，必须走钩子）
+    def _reply_image_backend_impl(openid, url, content, is_dm, msg_id, msg_seq):
+        if not qq_bot:
+            return False
+        return qq_bot.reply_image_url(openid, url, content=content, is_dm=is_dm,
+                                      msg_id=msg_id, msg_seq=msg_seq)
+
+    global _reply_image_backend
+    _reply_image_backend = _reply_image_backend_impl
 
     def _kb_factcheck(cid: int, claim: str):
         """知识沉淀第一层闸门（事实校对）：LLM+数据工具核验候选说法，
@@ -1300,15 +1343,15 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                             race = find_race_for_query(f1_api, info["year"] or SEASON,
                                                        info["round"], info["gp"])
                             if not race:
-                                return None
+                                return None, None
                         else:
                             race = f1_api.get_next_race()
                         if not race:
-                            return None
+                            return None, None
                         sessions = f1_api.get_all_sessions(race)
-                        return WeatherAPI().get_race_weather(race, sessions)
+                        return WeatherAPI().get_race_weather(race, sessions), race
 
-                    result = await loop.run_in_executor(None, _fetch_weather)
+                    result, race_obj = await loop.run_in_executor(None, _fetch_weather)
                     if not result:
                         head = (f"未找到「{arg}」对应的分站" if arg else "本赛季已无剩余比赛")
                         await reply_text(message,
@@ -1319,6 +1362,21 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         return
                     text, md = QQGroupBot.format_race_weather(result)
                     await reply_md(message, text, md)
+                    # 天气时间序列图：已完赛=OpenF1 实测，未赛=Open-Meteo 逐小时预报
+                    try:
+                        from common.chart_factory import render_weather_chart
+                        from functools import partial as _pw
+                        p = await loop.run_in_executor(
+                            None, _pw(render_weather_chart, SEASON, int(race_obj["round"]),
+                                      race_obj.get("raceName", ""), f1_api=f1_api))
+                        if p:
+                            import os as _os
+                            await reply_image(
+                                message,
+                                f"{RATING_BASE_URL}/exports/{_os.path.basename(p)}",
+                                content=f"⛅ {race_obj.get('raceName')} 天气时间序列")
+                    except Exception:
+                        pass
 
                 elif cmd == "/upgrades":
                     if not f1cosmos:
@@ -1438,9 +1496,9 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                                     None, _partial(render_pu_usage_chart, SEASON, f1cosmos=f1cosmos))
                                 if p:
                                     import os as _os
-                                    qq_bot.send_image_url(
-                                        f"{RATING_BASE_URL}/exports/{_os.path.basename(p)}",
-                                        content=f"🔧 {SEASON} 动力单元部件用量统计图")
+                                    await reply_image(message,
+                                                      f"{RATING_BASE_URL}/exports/{_os.path.basename(p)}",
+                                                      content=f"🔧 {SEASON} 动力单元部件用量统计图")
                             except Exception:
                                 pass
 
@@ -1483,9 +1541,9 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         await reply_text(message,
                                          f"{race.get('raceName')} 暂无进站数据（分站未赛或无有效停站）")
                     else:
-                        qq_bot.send_image_url(
-                            f"{RATING_BASE_URL}/exports/pitstop_chart_{SEASON}_R{race['round']}.png",
-                            content=f"🛠 {race.get('raceName')} 进站时长车队对比")
+                        await reply_image(message,
+                                          f"{RATING_BASE_URL}/exports/pitstop_chart_{SEASON}_R{race['round']}.png",
+                                          content=f"🛠 {race.get('raceName')} 进站时长车队对比")
 
                 elif cmd == "/racechart":
                     # 赛后三联统计图（pace分布+轮胎策略时间线+名次变化）
@@ -1526,9 +1584,10 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         await reply_text(message,
                                          f"{race.get('raceName')} 暂无统计数据（分站未赛或数据未收录）")
                     else:
-                        qq_bot.send_image_url(
-                            f"{RATING_BASE_URL}/exports/race_report_{SEASON}_R{race['round']}.png",
-                            content=f"📊 {race.get('raceName')} 赛后统计图（Pace/策略/名次变化）")
+                        import os as _os
+                        await reply_image(message,
+                                          f"{RATING_BASE_URL}/exports/{_os.path.basename(chart_path)}",
+                                          content=f"📊 {race.get('raceName')} 赛后统计图（Pace/策略/名次变化）")
 
                 elif cmd == "/trend":
                     # 本赛季车手积分走势图（逐站累计，前6名）
@@ -1545,9 +1604,9 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                     else:
                         import os as _os
                         fname = _os.path.basename(chart_path)
-                        qq_bot.send_image_url(
-                            f"{RATING_BASE_URL}/exports/{fname}",
-                            content=f"📈 {SEASON} 车手积分走势（逐站累计，含冲刺赛）")
+                        await reply_image(message,
+                                          f"{RATING_BASE_URL}/exports/{fname}",
+                                          content=f"📈 {SEASON} 车手积分走势（逐站累计，含冲刺赛）")
 
                 elif cmd == "/pace":
                     # 正赛 pace 分布统计图（OpenF1 圈速箱线图+配方着色+中位差条形图）
@@ -1588,9 +1647,10 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         await reply_text(message,
                                          f"{race.get('raceName')} 暂无 pace 数据（分站未赛或 OpenF1 未收录）")
                     else:
-                        chart_url = f"{RATING_BASE_URL}/exports/pace_chart_{SEASON}_R{race['round']}.png"
-                        qq_bot.send_image_url(
-                            chart_url, content=f"📊 {race.get('raceName')} 正赛 Pace 分布统计图")
+                        import os as _os
+                        await reply_image(message,
+                                          f"{RATING_BASE_URL}/exports/{_os.path.basename(chart_path)}",
+                                          content=f"📊 {race.get('raceName')} 正赛 Pace 分布统计图")
 
                 elif cmd == "/car":
                     if not f1cosmos:
@@ -1608,9 +1668,9 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                             None, _partial(render_destructors_chart, SEASON, f1cosmos=f1cosmos))
                         if p:
                             import os as _os
-                            qq_bot.send_image_url(
-                                f"{RATING_BASE_URL}/exports/{_os.path.basename(p)}",
-                                content=f"💥 {SEASON} 事故维修成本统计图")
+                            await reply_image(message,
+                                              f"{RATING_BASE_URL}/exports/{_os.path.basename(p)}",
+                                              content=f"💥 {SEASON} 事故维修成本统计图")
                     except Exception:
                         pass
 

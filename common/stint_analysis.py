@@ -91,13 +91,30 @@ class StintAnalyzer:
             return None
 
     def _openf1_get(self, endpoint: str, params: Dict) -> List[Dict]:
-        try:
-            resp = self.session.get(f"{OPENF1_BASE}/{endpoint}", params=params, timeout=30)
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            logger.warning(f"[Stint] OpenF1 {endpoint} 失败: {e}")
-            return []
+        # OpenF1 免费层偶发抖动：异常或 200 但空数组都重试一次（空数组常是数据未就绪/
+        # 边缘抖动，2026-10-09 review 实证仅异常重试修不到目标场景）；
+        # 429 限流读 Retry-After 退避（默认 20s），不做短间隔重试加重限流
+        import time as _t
+        for attempt in range(2):
+            try:
+                resp = self.session.get(f"{OPENF1_BASE}/{endpoint}", params=params, timeout=30)
+                if resp.status_code == 429 and attempt == 0:
+                    wait = int(resp.headers.get("Retry-After", "20") or 20)
+                    logger.warning(f"[Stint] OpenF1 {endpoint} 限流(429)，{wait}s 后重试")
+                    _t.sleep(min(wait, 30))
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                if isinstance(data, list) and not data and attempt == 0:
+                    _t.sleep(1.2)
+                    continue
+                return data if isinstance(data, list) else []
+            except Exception as e:
+                if attempt == 0:
+                    _t.sleep(1.2)
+                    continue
+                logger.warning(f"[Stint] OpenF1 {endpoint} 失败: {e}")
+                return []
 
     # ---------- 主计算 ----------
 
@@ -113,11 +130,18 @@ class StintAnalyzer:
 
         if season >= 2023:
             result = self._from_openf1(season, round_num)
+            # OpenF1 失败（服务器网络不可达/401/超时）→ Jolpica 兜底（无配方）。
+            # 2026-10-09 实证：阿里云服务器访问 api.openf1.org 返回 401
+            if "error" in result or not result.get("drivers"):
+                logger.warning(f"[Stint] OpenF1 不可用，转 Jolpica 兜底: {season} R{round_num}")
+                result = self._from_jolpica(season, round_num)
         else:
             result = self._from_jolpica(season, round_num)
 
         if use_cache and result and "error" not in result and result.get("drivers"):
-            self.cache.save(cache_key, result, ttl_hours=None)
+            # 兜底结果（无配方）短缓存 72h：OpenF1 恢复后可自愈升级，不永久占位
+            ttl = None if result.get("source") == "OpenF1" else 72
+            self.cache.save(cache_key, result, ttl_hours=ttl)
         return result
 
     def _from_openf1(self, season: int, round_num: int) -> Dict[str, Any]:
@@ -277,14 +301,34 @@ class StintAnalyzer:
         return result
 
     def _jolpica_fetch(self, path: str) -> List[Dict]:
-        url = f"{JOLPICA_BASE}/{path}.json?limit=1000"
-        try:
-            resp = self.session.get(url, timeout=30)
-            resp.raise_for_status()
-            races = resp.json().get("MRData", {}).get("RaceTable", {}).get("Races", [])
-            if not races:
-                return []
-            return races[0].get("Laps") or races[0].get("PitStops") or []
-        except Exception as e:
-            logger.warning(f"[Stint] Jolpica 拉取失败 {path}: {e}")
-            return []
+        """Jolpica 拉取（laps/pitstops）。laps 需分页：单页 100 条计时记录
+        （≈4-5 圈/页，2026-10-09 实证 limit=1000 也只回约 5 圈），
+        按 offset 翻页合并 Laps 数组，直到拿满 MRData.total"""
+        all_items: List[Dict] = []
+        offset = 0
+        page_size = 1000
+        for _ in range(30):  # 上限防死循环
+            url = f"{JOLPICA_BASE}/{path}.json?limit={page_size}&offset={offset}"
+            try:
+                resp = self.session.get(url, timeout=30)
+                resp.raise_for_status()
+                data = resp.json().get("MRData", {})
+                races = data.get("RaceTable", {}).get("Races", [])
+                if not races:
+                    break
+                items = races[0].get("Laps") or races[0].get("PitStops") or []
+                all_items.extend(items)
+                total = int(data.get("total", 0) or 0)
+                # laps 分页按计时条数计：本页实际条数 < limit 说明已到最后一页
+                page_count = sum(len(l.get("Timings", []) or []) for l in items) \
+                    if items and "Timings" in (items[0] or {}) else len(items)
+                offset += page_count or page_size
+                if offset >= total or not items:
+                    break
+                # laps 页可能重叠圈号（页边界落在圈中），去重合并由调用方字典天然完成
+                if "Timings" not in (items[0] or {}):
+                    break  # pitstops 等按条数分页的接口一页够
+            except Exception as e:
+                logger.warning(f"[Stint] Jolpica 拉取失败 {path} offset={offset}: {e}")
+                break
+        return all_items

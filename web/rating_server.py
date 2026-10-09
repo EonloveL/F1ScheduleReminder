@@ -572,7 +572,8 @@ def exports(filename):
             or filename.startswith("quali_gap_") or filename.startswith("points_trend_")
             or filename.startswith("team_radar_") or filename.startswith("destructors_chart_")
             or filename.startswith("pu_usage_") or filename.startswith("pitstop_chart_")
-            or filename.startswith("sc_timeline_")):
+            or filename.startswith("sc_timeline_") or filename.startswith("weather_chart_")
+            or filename.startswith("weather_fc_")):
         abort(404)
     return send_from_directory(EXPORTS_DIR, filename)
 

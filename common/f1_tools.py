@@ -335,7 +335,24 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         if note:
             out["note"] = note
         if not elements:
-            out["error"] = f"{q_season}赛季无PU用量数据（FIA约2021年起才有此类官方文档）"
+            out["error"] = f"{q_season}赛季暂无PU部件数据（FIA约2021年起才有官方文档）"
+        # 当前赛季附 PU 用量堆叠柱图（chart_md 由 L2 嵌图）
+        if elements and q_season == season:
+            try:
+                import os as _os
+                from .chart_factory import render_pu_usage_chart
+                base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
+                if not base:
+                    p = None
+                else:
+                    p = render_pu_usage_chart(season, f1cosmos=f1cosmos)
+                if p and base:
+                    out["chart_md"] = f"![pic#800px #600px]({base}/exports/{_os.path.basename(p)})"
+                    out.setdefault("note", "")
+                    out["note"] = (out["note"] + "；" if out["note"] else "") + \
+                        "chart_md 为 PU 部件用量堆叠柱图（[超限]=超赛季上限），回答 PU 用量类问题时必须原文嵌入该图"
+            except Exception:
+                pass
         return out
 
     def _upgrades(gp_or_team="", year=None):
@@ -663,6 +680,21 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
             for k in ("track_temp_proxy", "track_temp_estimated"):
                 if isinstance(s.get(k), dict):
                     s[k].pop("note", None)
+        # 天气时间序列图：已完赛=OpenF1 实测，未赛=Open-Meteo 预报（chart_md 由 L2 嵌图）
+        try:
+            import os as _os
+            base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
+            if base:
+                from .chart_factory import render_weather_chart
+                p = render_weather_chart(q_season, int(race["round"]),
+                                         race.get("raceName", ""), f1_api=f1_api)
+                if p:
+                    fname = _os.path.basename(p)
+                    result["chart_md"] = f"![pic#800px #400px]({base}/exports/{fname})"
+                    result["note"] = ("chart_md 为本站天气时间序列图（气温/沥青温度/降水/风速），"
+                                      "回答本站天气类问题时必须原文嵌入该图")
+        except Exception:
+            pass
         return result
 
     def _telemetry_chart(drivers="", gp="", session="race", lap=None):
@@ -808,11 +840,13 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
             try:
                 import os as _os
                 from .chart_factory import render_pace_chart
-                p = render_pace_chart(q_season, round_num, race.get("raceName", ""),
-                                      f1_api=f1_api)
                 base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
-                if p and base:
-                    result["chart_url"] = f"{base}/exports/pace_chart_{q_season}_R{round_num}.png"
+                p = (render_pace_chart(q_season, round_num, race.get("raceName", ""),
+                                       f1_api=f1_api)
+                     if base else None)
+                if p:
+                    fname = _os.path.basename(p)
+                    result["chart_url"] = f"{base}/exports/{fname}"
                     result["chart_md"] = (f"![pic#800px #450px]({result['chart_url']})")
                     result["note"] += ("；chart_md 为本场 pace 分布统计图（箱线图+轮胎配方着色+"
                                        "中位差条形图），回答中必须用 chart_md 原文嵌入该图")

@@ -378,13 +378,17 @@ class ReminderScheduler:
                 chart_path = render_race_report_chart(_season, int(session['round']),
                                                       session.get('race_name', ''),
                                                       f1_api=self.f1_api)
-                fname = f"race_report_{_season}_R{session['round']}.png"
+                fname = None
+                if chart_path:
+                    import os as _os
+                    fname = _os.path.basename(chart_path)
                 if not chart_path:
                     chart_path = render_pace_chart(_season, int(session['round']),
                                                    session.get('race_name', ''),
                                                    f1_api=self.f1_api)
-                    fname = f"pace_chart_{_season}_R{session['round']}.png"
-                if chart_path:
+                    if chart_path:
+                        fname = _os.path.basename(chart_path)
+                if chart_path and fname:
                     base_url = self.config.get('rating_base_url')
                     if base_url:
                         self.notify_bot.send_image_url(

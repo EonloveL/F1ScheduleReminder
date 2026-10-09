@@ -1252,6 +1252,61 @@ Formula 1 🏎️💨"""
 
     # ==================== 私聊消息（C2C） ====================
 
+    def reply_image_url(self, openid: str, image_url: str, content: str = " ",
+                        is_dm: bool = False, msg_id: str = None,
+                        msg_seq: int = None) -> bool:
+        """指定对象发送图片（群/私聊皆可，支持被动回复 msg_id 绑定省主动额度）。
+
+        Args:
+            openid: 群 group_openid（is_dm=False）或用户 openid（is_dm=True）
+            image_url: 图片公网 URL
+            content: 附带文字（QQ 要求 content 非空）
+            is_dm: 是否私聊
+            msg_id/msg_seq: 被动回复绑定（可选，过期则主动发送）
+        """
+        import random
+        scope = "users" if is_dm else "groups"
+        try:
+            if not self._get_access_token():
+                logger.error("无法获取Access Token，发送图片失败")
+                return False
+            upload_resp = requests.post(
+                f"{self.base_url}/v2/{scope}/{openid}/files",
+                headers={"Authorization": f"QQBot {self.access_token}",
+                         "Content-Type": "application/json"},
+                json={"file_type": 1, "url": image_url, "srv_send_msg": False},
+                timeout=20, proxies={"http": None, "https": None})
+            if upload_resp.status_code != 200:
+                logger.error(f"图片URL提交失败: {upload_resp.status_code} - {upload_resp.text[:300]}")
+                return False
+            file_info = upload_resp.json().get("file_info")
+            if not file_info:
+                logger.error(f"图片URL提交响应无file_info: {upload_resp.text[:300]}")
+                return False
+
+            payload = {"msg_type": 7, "media": {"file_info": file_info},
+                       "content": content or " "}
+            if msg_id:
+                payload["msg_id"] = msg_id
+                payload["msg_seq"] = msg_seq or random.randint(1, 1000000)
+            else:
+                payload["msg_seq"] = random.randint(1, 1000000)
+            send_resp = requests.post(
+                f"{self.base_url}/v2/{scope}/{openid}/messages",
+                headers={"Authorization": f"QQBot {self.access_token}",
+                         "Content-Type": "application/json"},
+                json=payload, timeout=15, proxies={"http": None, "https": None})
+            if send_resp.status_code == 200:
+                result = send_resp.json()
+                if result.get("id") or result.get("code") == 0:
+                    logger.info(f"✓ 图片消息发送成功（{'私聊' if is_dm else '群聊'}）")
+                    return True
+            logger.error(f"图片消息发送失败: {send_resp.status_code} - {send_resp.text[:300]}")
+            return False
+        except Exception as e:
+            logger.error(f"发送图片异常: {e}")
+            return False
+
     def send_dm_message(self, user_openid: str, content: str) -> bool:
         """
         发送私聊文本消息（主动单聊，需用户未关闭"允许主动发送"）
