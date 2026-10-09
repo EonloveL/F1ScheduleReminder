@@ -23,6 +23,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.f1cosmos.com"
+SITE_URL = "https://f1cosmos.com"  # 页面站（destructors 无 JSON API，数据内嵌 RSC 流）
 
 # 车队中文别名 -> F1Cosmos broadcast_name（2026 赛季：索伯已更名为奥迪）
 # 值为列表时表示历史曾用名候选，按赛季数据实际存在的名称匹配：
@@ -226,11 +227,103 @@ class F1CosmosAPI:
         return [self._normalize_element(e) for e in data]
 
     def get_destructors(self, season: int = None) -> List[Dict[str, Any]]:
-        """获取赛季事故维修成本（后端暂未上线，404 返回空列表）"""
+        """获取赛季事故维修成本明细（destructors）。
+
+        2026-09-28 起后端上线，但仅页面渲染、无 JSON API（api 端点 404）——
+        数据内嵌在 Next.js RSC 流中，抓页面 HTML 提取。缓存键 v2（旧键可能缓存了
+        未上线时期的空列表）。空结果只短缓存 1h（新数据上线后快速生效）。
+        """
         season = season or self.season
-        data = self._get("dashboard/destructors", {"year": season},
-                         cache_key=f"f1cosmos_destructors_{season}", ttl_hours=24)
-        return data if isinstance(data, list) else []
+        cache_key = f"f1cosmos_destructors_v2_{season}"
+        if self.cache:
+            cached = self.cache.load(cache_key)
+            if cached is not None:
+                return cached
+        records = self._scrape_destructors_page(season)
+        if self.cache and (records or records == []):
+            self.cache.save(cache_key, records, ttl_hours=24 if records else 1)
+        return records
+
+    @staticmethod
+    def _scrape_destructors_page(season: int) -> List[Dict[str, Any]]:
+        """从 destructors 页面的 RSC 流中提取事故成本明细数组（反转义 + 括号平衡）"""
+        try:
+            resp = requests.get(f"{SITE_URL}/dashboard/destructors",
+                                params={"year": season},
+                                headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+            if resp.status_code != 200:
+                logger.warning(f"[F1Cosmos] destructors 页面 HTTP {resp.status_code}")
+                return []
+            html = resp.text
+        except requests.RequestException as e:
+            logger.warning(f"[F1Cosmos] destructors 页面请求失败: {e}")
+            return []
+
+        import re as _re
+        chunks = []
+        for m in _re.finditer(r'self\.__next_f\.push\(\[1,"', html):
+            i = m.end()
+            out = []
+            while i < len(html):
+                c = html[i]
+                if c == "\\":          # 转义对原样保留，交给 json.loads 反转义
+                    out.append(html[i:i + 2])
+                    i += 2
+                    continue
+                if c == '"':
+                    break
+                out.append(c)
+                i += 1
+            try:
+                chunks.append(json.loads('"' + "".join(out) + '"'))
+            except ValueError:
+                continue
+        rsc = "".join(chunks)
+
+        key = '[{"quantity":'
+        i = rsc.find(key)
+        if i < 0:
+            logger.warning("[F1Cosmos] destructors RSC 中未找到明细数组（页面结构可能变更）")
+            return []
+        depth, end = 0, -1
+        for j in range(i, len(rsc)):
+            if rsc[j] == "[":
+                depth += 1
+            elif rsc[j] == "]":
+                depth -= 1
+                if depth == 0:
+                    end = j + 1
+                    break
+        if end < 0:
+            return []
+        try:
+            arr = json.loads(rsc[i:end])
+        except ValueError as e:
+            logger.warning(f"[F1Cosmos] destructors 明细解析失败: {e}")
+            return []
+
+        records = []
+        for r in arr:
+            try:
+                comp = r.get("components") or {}
+                gp = r.get("grand_prix") or {}
+                ds = r.get("driver_season") or {}
+                drv = ds.get("drivers") or {}
+                price = comp.get("price") or 0
+                qty = r.get("quantity") or 1
+                records.append({
+                    "driver": drv.get("full_name", ""),
+                    "driver_code": drv.get("code", ""),
+                    "driver_number": drv.get("driver_number"),
+                    "team": (ds.get("constructors") or {}).get("name", ""),
+                    "round": gp.get("round"), "gp_name": gp.get("name", ""),
+                    "gp_city": gp.get("city", ""),
+                    "component": comp.get("name", ""),
+                    "price": price, "quantity": qty, "cost": price * qty,
+                })
+            except (AttributeError, TypeError):
+                continue
+        return records
 
     # ==================== 归一化 ====================
 
@@ -806,17 +899,70 @@ class F1CosmosAPI:
         return text, md
 
     def format_destructors(self, query: str = "", season: int = None) -> Tuple[str, str]:
-        """事故维修成本 -> (纯文本, Markdown)。后端未上线时返回提示"""
-        data = self.get_destructors(season)
-        title = "💥 【事故维修成本】"
-        if not data:
-            return (f"{title}\n\n该功能数据暂未开放", f"## {title}\r\r该功能数据暂未开放")
+        """事故维修成本榜 -> (纯文本, Markdown)。
 
-        text = f"{title}\n\n"
-        md = f"## {title}\r\r"
-        # 数据结构未定（后端未上线），先原样输出条目
-        for e in data:
-            line = json.dumps(e, ensure_ascii=False)
-            text += f"{line}\n"
-            md += f"{line}\r"
+        2026-09-28 起数据源上线（页面 RSC 抓取，get_destructors）：
+        默认车手榜 Top10 + 车队榜 Top5；query 指定车手/车队时给该对象的分站明细。
+        成本 = FIA 部件申报价 × 更换数量（估算口径，非官方账单）。
+        """
+        from collections import defaultdict
+        season = season or self.season
+        data = self.get_destructors(season)
+        title = f"💥 {season} 事故维修成本"
+        if not data:
+            return (f"{title}\n\n该赛季暂无事故成本数据",
+                    f"## {title}\r\r该赛季暂无事故成本数据")
+
+        def _fmt_money(v):
+            return f"${v:,.0f}"
+
+        query = (query or "").strip()
+        # 车手榜聚合
+        by_driver = defaultdict(lambda: [0.0, 0])
+        by_team = defaultdict(lambda: [0.0, 0])
+        for r in data:
+            by_driver[r["driver"]][0] += r["cost"]
+            by_driver[r["driver"]][1] += r.get("quantity") or 1
+            by_team[r["team"]][0] += r["cost"]
+            by_team[r["team"]][1] += r.get("quantity") or 1
+
+        if query:
+            # 车手/车队明细：子串匹配（英文全名/代码/车队名）
+            q = query.lower()
+            hits = [r for r in data
+                    if q in r["driver"].lower() or q == r["driver_code"].lower()
+                    or q in r["team"].lower()]
+            if not hits:
+                msg = f"{season} 事故成本中未找到「{query}」"
+                return f"{title}\n\n{msg}", f"## {title}\r\r{msg}"
+            total = sum(r["cost"] for r in hits)
+            who = hits[0]["driver"] if q in hits[0]["driver"].lower() \
+                or q == hits[0]["driver_code"].lower() else hits[0]["team"]
+            text = f"{title} - {who}\n\n累计: {_fmt_money(total)}（{sum(r.get('quantity') or 1 for r in hits)}项）\n"
+            md = f"## {title}\r\r**{who}** 累计 **{_fmt_money(total)}**（{sum(r.get('quantity') or 1 for r in hits)}项）\r\r"
+            hits.sort(key=lambda x: (x.get('round') or 0))
+            for r in hits:
+                line = f"R{r.get('round')} {r['gp_name']} · {r['component']} ×{r.get('quantity') or 1} — {_fmt_money(r['cost'])}"
+                text += line + "\n"
+                md += f"{line}\r"
+            md += "\r> 成本=FIA部件申报价×更换数量（估算口径，非官方账单）"
+            return text, md
+
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        text = f"{title}\n\n车手榜（累计部件成本）:\n"
+        md = f"## {title}\r\r**车手榜**（累计部件成本）\r"
+        for i, (d, (cost, cnt)) in enumerate(
+                sorted(by_driver.items(), key=lambda x: -x[1][0])[:10], 1):
+            rank = medals.get(i, f"**{i}.**")
+            line = f"{rank} {d} — {_fmt_money(cost)}（{cnt}项）"
+            text += f"{i}. {d} — {_fmt_money(cost)}（{cnt}项）\n"
+            md += f"{rank} **{d.title()}** — {_fmt_money(cost)}（{cnt}项）\r"
+        text += "\n车队榜:\n"
+        md += "\r**车队榜**\r"
+        for i, (t, (cost, cnt)) in enumerate(
+                sorted(by_team.items(), key=lambda x: -x[1][0])[:5], 1):
+            text += f"{i}. {t} — {_fmt_money(cost)}\n"
+            md += f"{i}. {t} — {_fmt_money(cost)}（{cnt}项）\r"
+        md += "\r> 成本=FIA部件申报价×更换数量（估算口径，非官方账单）· 数据 F1Cosmos destructors\r"
+        text += "\n（成本=部件申报价×数量估算，非官方账单）"
         return text, md

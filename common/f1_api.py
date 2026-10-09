@@ -1155,7 +1155,13 @@ class F1APIManager:
             return None, "failed", 0.0
         data, psum, name = best
         data["_source"] = name
-        return self._fill_standings_gaps(data, season), f"{name} (freshest)", psum
+        data = self._fill_standings_gaps(data, season)
+        # 回写共享缓存：赛后推了最新榜，/drivers 等走 12h 缓存的读取路径不应再看到旧榜
+        try:
+            self.cache.save(f"standings_{season}", data, ttl_hours=12)
+        except Exception:
+            pass
+        return data, f"{name} (freshest)", psum
 
     def get_current_standings(self, force_refresh: bool = False) -> Dict[str, Any]:
         """

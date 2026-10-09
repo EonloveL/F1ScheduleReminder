@@ -369,16 +369,72 @@ class ReminderScheduler:
 
         self._mark_pushed(session)
 
-        # 正赛结束后推送最新积分榜+个性化DM（带新鲜度门槛：积分总和 ≥ 已知总和+本场颁发分）
-        awarded = 0.0
-        for e in (results.get("Results") or results.get("results") or []):
+        # 赛后三联统计图（pace 分布箱线+轮胎策略时间线+名次变化，一张图一次发送）；
+        # OpenF1 数据就绪即发，失败回退单张 pace 图，再失败不影响主流程
+        if hasattr(self.notify_bot, 'send_image_url'):
             try:
-                awarded += float(e.get("points", 0) or 0)
-            except (ValueError, TypeError):
-                continue
+                from .chart_factory import render_race_report_chart, render_pace_chart
+                _season = self.config.get('SEASON') or session['datetime'].year
+                chart_path = render_race_report_chart(_season, int(session['round']),
+                                                      session.get('race_name', ''),
+                                                      f1_api=self.f1_api)
+                fname = f"race_report_{_season}_R{session['round']}.png"
+                if not chart_path:
+                    chart_path = render_pace_chart(_season, int(session['round']),
+                                                   session.get('race_name', ''),
+                                                   f1_api=self.f1_api)
+                    fname = f"pace_chart_{_season}_R{session['round']}.png"
+                if chart_path:
+                    base_url = self.config.get('rating_base_url')
+                    if base_url:
+                        self.notify_bot.send_image_url(
+                            f"{base_url}/exports/{fname}",
+                            content=f"📊 {session['race_name']} 赛后统计图（Pace分布/轮胎策略/名次变化）")
+                # 安全车/VSC/红旗时间线：本站有事件才发（无事件 render 返回 None 自动跳过）
+                try:
+                    from .chart_factory import render_sc_timeline
+                    sc_path = render_sc_timeline(_season, int(session['round']),
+                                                 session.get('race_name', ''),
+                                                 f1_api=self.f1_api)
+                    base_url = self.config.get('rating_base_url')
+                    if sc_path and base_url:
+                        self.notify_bot.send_image_url(
+                            f"{base_url}/exports/sc_timeline_{_season}_R{session['round']}.png",
+                            content=f"🚩 {session['race_name']} 安全车事件时间线")
+                except Exception as e:
+                    logger.warning(f"安全车时间线推送失败（不影响主流程）: {e}")
+            except Exception as e:
+                logger.warning(f"赛后统计图推送失败（不影响主流程）: {e}")
+
+        # 正赛结束后推送最新积分榜+个性化DM（带新鲜度门槛：积分总和 ≥ 已知总和+本场颁发分）
+        # 颁发分用规范化 entries（含 points）——双源统一口径，不依赖 Ergast Results 键
+        awarded = 0.0
+        try:
+            _norm = self.f1_api.get_session_results(int(session['round']), "race",
+                                                    retries=1,
+                                                    season=self.config.get('SEASON'))
+            for e in ((_norm or {}).get("entries") or []):
+                try:
+                    awarded += float(e.get("points") or 0)
+                except (ValueError, TypeError):
+                    continue
+        except Exception as _e:
+            logger.warning(f"本场颁发分计算失败（跳过新鲜度门槛）: {_e}")
         last_sum = self._last_standings_sum()
-        min_sum = (last_sum + awarded) if (last_sum and awarded) else None
+        # 赛季首赛无基线：门槛退化为 总和 ≥ 本场颁发分（防推上赛季末缓存数据）
+        min_sum = (last_sum + awarded) if last_sum else (awarded or None)
         self._push_standings_with_retry(session, race_data, min_points_sum=min_sum)
+
+        # 比赛周末结束：事故成本缓存即刻失效，下次 /car 重抓含本站的最新数据
+        # （24h TTL 之外的主动失效钩子，防周一查询还隔着一天的旧缓存）
+        f1cosmos = self.config.get('f1cosmos')
+        if f1cosmos and getattr(f1cosmos, 'cache', None):
+            try:
+                season = self.config.get('SEASON') or session['datetime'].year
+                f1cosmos.cache.clear(f"f1cosmos_destructors_v2_{season}")
+                logger.info("已失效事故成本缓存（赛后钩子）")
+            except Exception as e:
+                logger.warning(f"失效事故成本缓存失败: {e}")
         return True
 
     # ==================== 积分榜新鲜度状态 ====================
@@ -401,11 +457,15 @@ class ReminderScheduler:
     def _record_standings_sum(self, points_sum: float, session: Dict[str, Any]):
         try:
             import json as _json
-            with open(self._standings_state_path(), "w", encoding="utf-8") as f:
+            import os as _os
+            path = self._standings_state_path()
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
                 _json.dump({"last_points_sum": points_sum,
                             "round": session.get("round"),
                             "updated": datetime.now(self.local_tz).isoformat()}, f,
                            ensure_ascii=False)
+            _os.replace(tmp, path)  # 原子写，防崩溃留半截文件
         except Exception as e:
             logger.warning(f"积分榜状态写入失败: {e}")
 
@@ -525,26 +585,32 @@ class ReminderScheduler:
             from datetime import timezone as _tz
             now = datetime.now(_tz.utc)
             season = self.config.get('SEASON') or now.year
-            race_dur = timedelta(minutes=self.SESSION_DURATION.get('race', 120))
             count = 0
 
             for race in self.f1_api.get_schedule():
                 for s in self.f1_api.get_all_sessions(race):
                     if s['type'] != 'race':
                         continue
-                    race_end = s['datetime'] + race_dur
-                    close_time = race_end + timedelta(hours=self.RATING_CLOSE_HOURS)
-                    if race_end > now or now >= close_time:
-                        continue  # 未结束，或投票窗口已过
+                    # 口径与正常路径一致：开启=开赛+RATING_OPEN_DELAY_MIN，截止=开启+24h
+                    open_time = s['datetime'] + timedelta(minutes=self.RATING_OPEN_DELAY_MIN)
+                    close_time = open_time + timedelta(hours=self.RATING_CLOSE_HOURS)
+                    if open_time > now or now >= close_time:
+                        continue  # 未到开启时刻，或投票窗口已过
                     key = ratings_store.race_key(season, s['round'])
                     existing = ratings_store.get_race(key)
                     if not existing:
-                        # 从未开启：立即补开，截止时间仍按正赛结束+24h（不因补开延后）
+                        # 从未开启：立即补开，截止时间仍按开启+24h（不因补开延后）
                         logger.warning(f"评分开启任务缺失，立即补开: {key} {s['race_name']}")
                         self._open_driver_rating(s, race, close_time=close_time)
                         count += 1
                     elif not existing.get("closed"):
-                        # 已开启未截止：检查截止任务是否因重启丢失
+                        # 已开启未截止：补发开启引导卡（预创建条目从未开过卡时群里无公告）
+                        # + 检查截止任务是否因重启丢失
+                        if not existing.get("card_sent"):
+                            logger.warning(f"评分开启卡从未发送，补发: {key}")
+                            self._open_driver_rating(s, race, close_time=close_time)
+                            count += 1
+                            continue
                         job_id = f"rating_close_{key}"
                         if not any(j.id == job_id for j in self.scheduler.get_jobs()):
                             self.scheduler.add_job(
@@ -732,6 +798,12 @@ class ReminderScheduler:
             logger.info(f"✓ 评分引导卡片已发送: {race_key}")
         except Exception as e:
             logger.warning(f"评分引导卡片发送失败: {e}")
+        # 标记已发开启卡（自愈扫描据此判断要不要补发；发送失败也标记——
+        # 失败多是平台侧临时问题，下轮自愈再补会刷屏）
+        try:
+            ratings_store.mark_card_sent(race_key)
+        except Exception:
+            pass
 
         # 调度截止任务
         job_id = f"rating_close_{race_key}"
@@ -891,6 +963,21 @@ class ReminderScheduler:
             ok = self.notify_bot.send_session_result(result, watch_driver_ids=watch_ids)
             if ok is not False and self.config.get('dm_session_result'):
                 self._send_dm_session_result(result)
+            # 排位赛成绩卡后附排位差距图（杆位金色+逐车手差距条形图）
+            if ok is not False and session.get('type') == 'qualifying' \
+                    and hasattr(self.notify_bot, 'send_image_url'):
+                try:
+                    from .chart_factory import render_quali_gap_chart
+                    _season = self.config.get('SEASON') or session['datetime'].year
+                    p = render_quali_gap_chart(_season, int(session['round']),
+                                               session.get('race_name', ''), f1_api=self.f1_api)
+                    base_url = self.config.get('rating_base_url')
+                    if p and base_url:
+                        self.notify_bot.send_image_url(
+                            f"{base_url}/exports/quali_gap_{_season}_R{session['round']}.png",
+                            content=f"⏱️ {session['race_name']} 排位差距图")
+                except Exception as e:
+                    logger.warning(f"排位差距图推送失败（不影响主流程）: {e}")
             return ok is not False
         return True
 

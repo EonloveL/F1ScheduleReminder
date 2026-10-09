@@ -462,6 +462,12 @@ class QQGroupBot:
         text = f"🏁 【{race_name} 比赛结果】\n\n"
         md = f"## 🏁 {race_name} 比赛结果\r\r"
 
+        if "Results" not in results:
+            # 缺 Results 键：返回 False 让调度器轮询补推，
+            # 而不是推一张只有标题的空卡并永久定格
+            logger.warning(f"比赛结果缺 Results 键（源 {results.get('_source', '?')}），不推空卡: {race_name}")
+            return False
+
         if "Results" in results:
             medals = {1: "🥇", 2: "🥈", 3: "🥉"}
             dnf = []
@@ -495,6 +501,10 @@ class QQGroupBot:
                     text += f"\n⚡ 最快圈速: {fastest_driver} - {lap_time}\n"
                     md += f"\r⚡ 最快圈速：**{fastest_driver}** - {lap_time}\r"
                     break
+            if dnf:
+                dnf_line = "退赛: " + "、".join(dnf)
+                text += f"\n{dnf_line}\n"
+                md += f"\r🛠️ {dnf_line}\r"
 
         if lap_record_info:
             text += f"\n{lap_record_info}\n"
@@ -863,7 +873,9 @@ Formula 1 🏎️💨"""
             avatar = f"{avatar} " if avatar else ""
             ticon = get_team_icon_md(team)
             ticon = f"{ticon} " if ticon else ""
-            lines.append(f"{rank} {avatar}**{name}** — {points}分{win_str}\r> {ticon}{team}")
+            # 引用行后补空行阻断惰性延续（否则第2名起全部吃进引用块小字缩进——
+            # 与升级件/PU卡片同款 bug）
+            lines.append(f"{rank} {avatar}**{name}** — {points}分{win_str}\r> {ticon}{team}\r")
         return "\r".join(lines)
 
     def format_constructor_standings_md(self, team_entries: list, top_n: int = None) -> str:
@@ -1007,7 +1019,7 @@ Formula 1 🏎️💨"""
             sprint = " ⚡" if "Sprint" in race else ""
             status = "✅" if passed else "🔜"
             text += f"{status} R{round_num} {name}{sprint} - {date_str}\n"
-            md += f"{status} **R{round_num}** {name}{sprint}\r> {circuit} · {date_str}\r"
+            md += f"{status} **R{round_num}** {name}{sprint}\r> {circuit} · {date_str}\r\r"
 
         text += "\n⚡=冲刺赛周末 ✅=已结束 🔜=未开始"
         md += "\r\r⚡冲刺赛周末 · ✅已结束 · 🔜未开始"

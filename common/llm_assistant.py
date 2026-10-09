@@ -1341,7 +1341,8 @@ class LLMAssistant:
             if _deep_eff not in ("none", "low", "medium", "high"):
                 logger.warning(f"LLM_DEEP_REASONING 非法值 '{_deep_eff}'，回退 high")
                 _deep_eff = "high"
-            l2_extra = {"reasoning_effort": _deep_eff}
+            # reasoning_effort 仅 kimi 系支持，按供应商限定（防误传给不支持的供应商）
+            l2_extra = ({"reasoning_effort": _deep_eff} if l2_provider == "kimi" else {})
             if not search_queries:
                 search_queries = ["媒体对该站升级件效果的技术评论"]
             logger.info(f"进入深度分析模式: model={l2_model} 强制联网")

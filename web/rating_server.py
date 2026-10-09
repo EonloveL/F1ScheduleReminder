@@ -510,7 +510,7 @@ def rate(key, token):
 
     import json as _json
     from datetime import datetime, timezone
-    from zoneinfo import ZoneInfo
+    from pytz import timezone as _ptz  # 容器 python:3.11-slim 无系统 tzdata，ZoneInfo 会抛异常；pytz 自带数据库
     votes = store.get_member_votes(key, member)
     drivers_map = get_race_drivers(race["season"], race["round"])
     drivers = sorted(
@@ -523,7 +523,7 @@ def rate(key, token):
     pending_tip = ""
     if pending:
         pending_tip = ("投票将于 "
-                       + open_at.astimezone(ZoneInfo("Asia/Shanghai")).strftime('%m月%d日 %H:%M')
+                       + open_at.astimezone(_ptz("Asia/Shanghai")).strftime('%m月%d日 %H:%M')
                        + "（北京时间）开启")
     if race.get("closed"):
         status = "评分已截止，仅可查看"
@@ -566,7 +566,13 @@ def exports(filename):
     # 仅允许图表PNG（QQ拉取图片需要公网URL），CSV等数据文件不对外提供
     if not filename.endswith(".png"):
         abort(404)
-    if not (filename.startswith("ratings_chart_") or filename.startswith("telemetry_")):
+    if not (filename.startswith("ratings_chart_") or filename.startswith("telemetry_")
+            or filename.startswith("pace_chart_") or filename.startswith("race_report_")
+            or filename.startswith("strategy_chart_") or filename.startswith("positions_chart_")
+            or filename.startswith("quali_gap_") or filename.startswith("points_trend_")
+            or filename.startswith("team_radar_") or filename.startswith("destructors_chart_")
+            or filename.startswith("pu_usage_") or filename.startswith("pitstop_chart_")
+            or filename.startswith("sc_timeline_")):
         abort(404)
     return send_from_directory(EXPORTS_DIR, filename)
 

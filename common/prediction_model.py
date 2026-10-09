@@ -100,6 +100,9 @@ class RacePredictionModel:
         import threading as _th
         self._predict_locks: Dict[tuple, _th.Lock] = {}
         self._predict_locks_guard = _th.Lock()
+        # CircuitsManager 懒加载单例（__init__ 每次全量读 27KB JSON ≈0.9ms，
+        # _stint_features 每车手调用、championship MC 内层调用都被放大）
+        self._cm = None
 
     # ==================== 基础数据 ====================
 
@@ -370,8 +373,10 @@ class RacePredictionModel:
         2026-09-21 起由 analysis/compute_sc_rates.py 用 OpenF1 race_control 统计 2023+）。
         查不到（历史/无数据赛道）返回空 dict"""
         try:
-            from .circuits_manager import CircuitsManager
-            return CircuitsManager().get_circuit(circuit_id) or {}
+            if self._cm is None:
+                from .circuits_manager import CircuitsManager
+                self._cm = CircuitsManager()
+            return self._cm.get_circuit(circuit_id) or {}
         except Exception:
             return {}
 
@@ -442,8 +447,10 @@ class RacePredictionModel:
             similar_race_pace_idx, similar_basis = None, []
             if circuit_id:
                 try:
-                    from .circuits_manager import CircuitsManager
-                    cm = CircuitsManager()
+                    if self._cm is None:
+                        from .circuits_manager import CircuitsManager
+                        self._cm = CircuitsManager()
+                    cm = self._cm
                     tgt_df = (cm.get_circuit(circuit_id) or {}).get("downforce")
                     if tgt_df:
                         sim_rounds = [rec["round"] for rec in season_ds
@@ -1087,13 +1094,17 @@ class RacePredictionModel:
         # 分站轮次 → circuit_id（A1 按各分站安全车率分别缩放残差）
         round_to_cid = {int(x.get("round", 0)): (x.get("Circuit", {}) or {}).get("circuitId", "")
                         for x in schedule}
+        # 循环外预计算（内层 _sc_strength/exp 矩阵按分站预取，避免 mc_model×分站 重复构造）
+        resid_by_round = {r["round"]: resid * (1.0 + SC_RESID_K * self._sc_strength(round_to_cid.get(r["round"], "")))
+                          for r in remaining}
+        exp_by_round = {r["round"]: np.array([_match_exp(exp_map[r["round"]], nm) for nm in names])
+                        for r in remaining}
         for _ in range(mc_model):
             totals = base.copy()
             for r in remaining:
-                em = exp_map[r["round"]]
-                exp = np.array([_match_exp(em, nm) for nm in names])
+                exp = exp_by_round[r["round"]]
                 # A1：该分站安全车强度放大残差
-                resid_r = resid * (1.0 + SC_RESID_K * self._sc_strength(round_to_cid.get(r["round"], "")))
+                resid_r = resid_by_round[r["round"]]
                 order = np.argsort(exp + rng2.normal(0, resid_r, n))
                 pts = np.zeros(n)
                 pts[order[:n_race_scorers]] = RACE_POINTS[:n_race_scorers]

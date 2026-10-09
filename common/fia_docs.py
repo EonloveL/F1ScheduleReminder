@@ -72,6 +72,7 @@ DOC_SLUGS = {
     "upgrades": "car_presentation_submissions",
     "pu_used": "pu_elements_used_per_driver_up_to_now",
     "pu_new": "new_pu_elements_for_this_competition",
+    "pu_info": "power_unit_information",
 }
 
 
@@ -488,6 +489,9 @@ class FIADocsAPI(F1CosmosAPI):
                 team = self._find_team_header(page, main.bbox[1])
                 if team:
                     state["team"] = team
+                    # 车队切换时清空合并单元格继承源，防新车队首行继承上一车队的
+                    # 原因/差异/描述（2026-09-28 review 发现跨车队污染风险）
+                    state["last_complete"] = None
                 self._parse_upgrades_table(main.extract(), gp_name, pdf_url, updates, state)
         if state["current"]:
             updates.append(state["current"])
@@ -529,11 +533,14 @@ class FIADocsAPI(F1CosmosAPI):
     @staticmethod
     def _col_layout(row: list) -> tuple:
         """按列数判定表结构 -> (原因列, 差异列, 描述起始列)。
-        完整表 13列: 4=原因 7=差异 9+=描述；跨页续表缩成 5~7列: 2=原因 3=差异 4+=描述
-        （2026 巴库奥迪续页实证：13列→5列，旧固定索引把描述错塞进原因括号位、
-        差异/翻译全丢——/upgrades 卡片奥迪后半段裸英文事故）"""
+        完整表 13列: 4=原因 7=差异 9+=描述；跨页续表缩列（2026 巴库实证）：
+        5列续表 2=原因 3=差异 4+=描述；6~8列续表 2=原因 3=差异 5+=描述
+        （7列实证行：描述在第5列、第4列为空列占位——用4起拼会混入非描述单元格；
+        旧固定索引曾把描述错塞进原因括号位、差异/翻译全丢——/upgrades 卡片奥迪后半段裸英文事故）"""
         if len(row) >= 9:
             return 4, 7, 9
+        if len(row) >= 6:
+            return 2, 3, 5
         return 2, 3, 4
 
     def _row_desc(self, row: list) -> str:
@@ -589,6 +596,102 @@ class FIADocsAPI(F1CosmosAPI):
                     current["brief_description"] = (current["brief_description"] + " " + cont).strip()
         state["current"] = current
         state["last_complete"] = last_complete
+
+    # ==================== PDF解析：分站动力单元技术参数（Power Unit Information） ====================
+
+    def get_event_pu_info(self, event_name: str, season: int = None) -> Dict[str, Any]:
+        """获取指定分站的 Power Unit Information 技术参数（2026 新规逐站发布：
+        能量回收上限分环节/分 Overtake 模式、PU 功率削减率、Power Limited 距离、
+        Overtake 检测/激活线、例外区段）。
+
+        用户实证需求（2026-10-08）：新加坡 R17 与墨尔本站数值不同（回收上限 8.5/9.0 vs 8/8.5MJ），
+        禁止跨站套用。历史分站永久缓存，当前分站 24h。
+        """
+        season = season or self.season
+        if not event_name:
+            return {}
+        cache_key = f"fia_event_puinfo_v1_{season}_{re.sub(r'[^a-z0-9]+', '_', event_name.lower()).strip('_')}"
+        if self.cache:
+            cached = self.cache.load(cache_key)
+            if cached is not None:
+                return cached
+        result: Dict[str, Any] = {}
+        fetched_ok = False
+        try:
+            docs = self.get_event_documents(event_name, season)
+            if docs:
+                fetched_ok = True
+                url = self.find_doc_url(docs, "pu_info")
+                if url:
+                    pdf = self._download_pdf(url)
+                    if pdf:
+                        official = self.resolve_event_name(event_name, season) or event_name
+                        result = self.parse_pu_info_pdf(pdf, gp_name=official)
+                        if result:
+                            result["fia_url"] = url
+        except Exception as e:
+            logger.warning(f"FIA分站PU参数获取失败({season} {event_name}): {e}")
+            return {}
+        if self.cache and (result or fetched_ok):
+            ttl = None if season < self.season else (24 if result else 6)
+            self.cache.save(cache_key, result, ttl_hours=ttl)
+        return result
+
+    def parse_pu_info_pdf(self, pdf_bytes: bytes, gp_name: str = "") -> Dict[str, Any]:
+        """解析 Power Unit Information PDF（第2页为参数页；文本抽取，字段缺失容忍）。
+
+        实证结构（2026 新加坡 R17）：
+        - CENTRELINE 4.927 km
+        - Maximum Recharge per lap 五列：正赛Overtake未激活/激活、SQ&排位、练习、出场圈
+          （数值行形如 "8.5 MJ 9.0 MJ 9.0 MJ 9.0 MJ 9.0 MJ"）
+        - Power Limited Distance + Maximum PU Power Reduction Rate（"2185 m 100 kW/s"）
+        - OVERTAKE 区：Detection/Activation Line（米）、Detection Gap（秒）
+        - Maximum DC power of ERS-K：350 kW（绝对上限）
+        """
+        import pdfplumber
+        out: Dict[str, Any] = {"gp_name": gp_name, "mguk_max_kw": 350}
+        try:
+            with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                text = "\n".join((p.extract_text() or "") for p in pdf.pages)
+        except Exception as e:
+            logger.warning(f"PU信息PDF解析失败: {e}")
+            return {}
+
+        m = re.search(r"CENTRELINE\s+([\d.]+)\s*km", text)
+        if m:
+            out["centreline_km"] = float(m.group(1))
+        m = re.search(r"ROUND\s+No\.\s*(R?\d+)", text)
+        if m:
+            out["round_label"] = m.group(1)
+        m = re.search(r"FORMAT\s+(\w+)", text)
+        if m:
+            out["format"] = m.group(1)  # Standard/Alternative（冲刺周末）
+
+        # 能量回收上限：找 "MJ" 数值行（5列固定语义顺序）
+        mj = re.findall(r"([\d.]+)\s*MJ", text)
+        if len(mj) >= 5:
+            out["recharge_limits_mj"] = {
+                "race_normal": float(mj[0]), "race_overtake": float(mj[1]),
+                "qualifying": float(mj[2]), "free_practice": float(mj[3]),
+                "out_lap": float(mj[4]),
+            }
+        # 功率削减率 + Power Limited 距离（"2185 m 100 kW/s"）
+        m = re.search(r"(\d+)\s*m\s+(\d+)\s*kW/s", text)
+        if m:
+            out["power_limited_distance_m"] = int(m.group(1))
+            out["max_power_reduction_rate_kws"] = int(m.group(2))
+        # Overtake 检测/激活线（OVERTAKE 区内两个 "xxxx m" + 差距秒数）
+        ot = text.split("OVERTAKE", 1)[-1]
+        dists = re.findall(r"(\d{3,4})\s*m\b", ot)
+        if len(dists) >= 2:
+            out["overtake_detection_m"] = int(dists[0])
+            out["overtake_activation_m"] = int(dists[1])
+        m = re.search(r"([\d.]+)\s*s\b", ot)
+        if m:
+            out["overtake_gap_s"] = float(m.group(1))
+        out["note"] = ("数值为本站 FIA Power Unit Information 官方文档口径，逐站不同；"
+                       "MGU-K 350kW 为绝对功率上限（任何模式不可突破）")
+        return out
 
     # ==================== Cosmos兼容接口（FIA优先，失败回退） ====================
 

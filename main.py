@@ -176,6 +176,10 @@ HELP_TEXT = """🏎️ F1机器人命令列表：
 /upgrade 车队/部件 [地点/R几] [年份] - 升级件详细说明（含FIA文档链接）
 /pu [车手/车队] [年份] - 动力单元部件用量（如 /pu 法拉利、/pu 维斯塔潘 2023）
 /car [车队] - 事故维修成本
+/pace [地点/R几] - 正赛pace分布统计图（箱线图+轮胎配方着色）
+/racechart [地点/R几] - 赛后三联统计图（pace+轮胎策略+名次变化）
+/trend - 本赛季车手积分走势图
+/pitstops [地点/R几] - 进站时长车队对比箱线图
 /telemetry - 遥测/圈速/赛果可视化分析（F1Cosmos仪表盘链接）
 /setdriver 车手名 - 添加关注车手（如 /setdriver 维斯塔潘，最多3位）
 /setteam 车队名 - 添加关注车队（如 /setteam 法拉利，最多3支）
@@ -250,6 +254,10 @@ HELP_MARKDOWN = """## 🏎️ F1机器人指令面板
 /pu [车手/车队] [年份] 动力单元部件用量（历史赛季为FIA赛季末累计快照）
 /predict [地点] 本站排位/正赛名次统计模型预测（回测基准：领奖台命中2.3/场）
 /telemetry 遥测/圈速/赛果可视化分析
+/pace [地点/R几] 正赛pace分布统计图（箱线图+配方着色+中位差条形图）
+/racechart [地点/R几] 赛后三联统计图（pace+轮胎策略+名次变化）
+/trend 本赛季车手积分走势图
+/pitstops [地点/R几] 进站时长车队对比箱线图
 /car [车队] 事故维修成本
 
 **⭐ 车手评分**
@@ -414,7 +422,8 @@ def _get_driver_names_for_race(f1_api, race: dict) -> dict:
 COMMAND_NAMES = frozenset([
     "help", "drivers", "teams", "calendar", "next", "last", "gp",
     "watch", "weather", "setdriver", "setteam", "me", "unbind", "news", "rate", "ratings", "dotd",
-    "upgrades", "upgrade", "pu", "car", "clear", "live", "telemetry", "predict",
+    "upgrades", "upgrade", "pu", "car", "clear", "live", "telemetry", "predict", "pace",
+    "racechart", "trend", "pitstops",
     "kb",
 ])
 
@@ -1421,6 +1430,167 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         await reply_text(message, f"未找到「{arg}」对应的车手或车队\n用法: /pu [车手/车队] [年份]，如 /pu 法拉利、/pu 维斯塔潘 2023")
                     else:
                         await reply_md(message, text, md)
+                        # 当前赛季附 PU 部件用量堆叠柱图（历史赛季无图）
+                        if not pu_year or pu_year == SEASON:
+                            try:
+                                from common.chart_factory import render_pu_usage_chart
+                                p = await loop.run_in_executor(
+                                    None, _partial(render_pu_usage_chart, SEASON, f1cosmos=f1cosmos))
+                                if p:
+                                    import os as _os
+                                    qq_bot.send_image_url(
+                                        f"{RATING_BASE_URL}/exports/{_os.path.basename(p)}",
+                                        content=f"🔧 {SEASON} 动力单元部件用量统计图")
+                            except Exception:
+                                pass
+
+                elif cmd == "/pitstops":
+                    # 进站时长车队对比箱线图（Jolpica pitstops，停站静止时间口径）
+                    import asyncio as _aio
+                    loop = _aio.get_running_loop()
+
+                    def _gen_pit():
+                        from common.chart_factory import render_pitstop_chart
+                        from common.f1_api import find_race_by_circuit
+                        from datetime import datetime as _dtx
+                        schedule = f1_api.get_schedule_for_year(SEASON) or []
+                        race = None
+                        if arg:
+                            import re as _re
+                            m = _re.search(r"^[Rr]\s?0*(\d{1,2})$", arg.strip())
+                            if m:
+                                race = next((r for r in schedule
+                                             if int(r.get("round", 0)) == int(m.group(1))), None)
+                            else:
+                                race = find_race_by_circuit(schedule, arg)
+                        else:
+                            today = _dtx.now().date().isoformat()
+                            past = [r for r in schedule
+                                    if r.get("date") and r["date"] < today]
+                            race = past[-1] if past else None
+                        if not race:
+                            return None, None
+                        if race.get("date", "") >= _dtx.now().date().isoformat():
+                            return race, None
+                        p = render_pitstop_chart(SEASON, int(race["round"]),
+                                                 race.get("raceName", ""), f1_api=f1_api)
+                        return race, p
+
+                    race, chart_path = await loop.run_in_executor(None, _gen_pit)
+                    if race is None:
+                        await reply_text(message, "未找到分站（用法：/pitstops 或 /pitstops 雪邦、/pitstops R16）")
+                    elif chart_path is None:
+                        await reply_text(message,
+                                         f"{race.get('raceName')} 暂无进站数据（分站未赛或无有效停站）")
+                    else:
+                        qq_bot.send_image_url(
+                            f"{RATING_BASE_URL}/exports/pitstop_chart_{SEASON}_R{race['round']}.png",
+                            content=f"🛠 {race.get('raceName')} 进站时长车队对比")
+
+                elif cmd == "/racechart":
+                    # 赛后三联统计图（pace分布+轮胎策略时间线+名次变化）
+                    import asyncio as _aio
+                    loop = _aio.get_running_loop()
+
+                    def _gen_report():
+                        from common.chart_factory import render_race_report_chart
+                        from common.f1_api import find_race_by_circuit
+                        from datetime import datetime as _dtx
+                        schedule = f1_api.get_schedule_for_year(SEASON) or []
+                        race = None
+                        if arg:
+                            import re as _re
+                            m = _re.search(r"^[Rr]\s?0*(\d{1,2})$", arg.strip())
+                            if m:
+                                race = next((r for r in schedule
+                                             if int(r.get("round", 0)) == int(m.group(1))), None)
+                            else:
+                                race = find_race_by_circuit(schedule, arg)
+                        else:
+                            today = _dtx.now().date().isoformat()
+                            past = [r for r in schedule
+                                    if r.get("date") and r["date"] < today]
+                            race = past[-1] if past else None
+                        if not race:
+                            return None, None
+                        if race.get("date", "") >= _dtx.now().date().isoformat():
+                            return race, None
+                        p = render_race_report_chart(SEASON, int(race["round"]),
+                                                     race.get("raceName", ""), f1_api=f1_api)
+                        return race, p
+
+                    race, chart_path = await loop.run_in_executor(None, _gen_report)
+                    if race is None:
+                        await reply_text(message, "未找到分站（用法：/racechart 或 /racechart 雪邦、/racechart R16）")
+                    elif chart_path is None:
+                        await reply_text(message,
+                                         f"{race.get('raceName')} 暂无统计数据（分站未赛或数据未收录）")
+                    else:
+                        qq_bot.send_image_url(
+                            f"{RATING_BASE_URL}/exports/race_report_{SEASON}_R{race['round']}.png",
+                            content=f"📊 {race.get('raceName')} 赛后统计图（Pace/策略/名次变化）")
+
+                elif cmd == "/trend":
+                    # 本赛季车手积分走势图（逐站累计，前6名）
+                    import asyncio as _aio
+                    loop = _aio.get_running_loop()
+
+                    def _gen_trend():
+                        from common.chart_factory import render_points_trend_chart
+                        return render_points_trend_chart(SEASON, f1_api=f1_api)
+
+                    chart_path = await loop.run_in_executor(None, _gen_trend)
+                    if not chart_path:
+                        await reply_text(message, "积分走势数据不足（赛季前3站后可用）")
+                    else:
+                        import os as _os
+                        fname = _os.path.basename(chart_path)
+                        qq_bot.send_image_url(
+                            f"{RATING_BASE_URL}/exports/{fname}",
+                            content=f"📈 {SEASON} 车手积分走势（逐站累计，含冲刺赛）")
+
+                elif cmd == "/pace":
+                    # 正赛 pace 分布统计图（OpenF1 圈速箱线图+配方着色+中位差条形图）
+                    import asyncio as _aio
+                    loop = _aio.get_running_loop()
+
+                    def _gen_pace():
+                        from common.chart_factory import render_pace_chart
+                        from common.f1_api import find_race_by_circuit
+                        from datetime import datetime as _dtx
+                        schedule = f1_api.get_schedule_for_year(SEASON) or []
+                        race = None
+                        if arg:
+                            import re as _re
+                            m = _re.search(r"^[Rr]\s?0*(\d{1,2})$", arg.strip())
+                            if m:
+                                race = next((r for r in schedule
+                                             if int(r.get("round", 0)) == int(m.group(1))), None)
+                            else:
+                                race = find_race_by_circuit(schedule, arg)
+                        else:
+                            today = _dtx.now().date().isoformat()
+                            past = [r for r in schedule
+                                    if r.get("date") and r["date"] < today]
+                            race = past[-1] if past else None
+                        if not race:
+                            return None, None
+                        if race.get("date", "") >= _dtx.now().date().isoformat():
+                            return race, None  # 未赛
+                        p = render_pace_chart(SEASON, int(race["round"]),
+                                              race.get("raceName", ""), f1_api=f1_api)
+                        return race, p
+
+                    race, chart_path = await loop.run_in_executor(None, _gen_pace)
+                    if race is None:
+                        await reply_text(message, "未找到分站（用法：/pace 或 /pace 雪邦、/pace R16）")
+                    elif chart_path is None:
+                        await reply_text(message,
+                                         f"{race.get('raceName')} 暂无 pace 数据（分站未赛或 OpenF1 未收录）")
+                    else:
+                        chart_url = f"{RATING_BASE_URL}/exports/pace_chart_{SEASON}_R{race['round']}.png"
+                        qq_bot.send_image_url(
+                            chart_url, content=f"📊 {race.get('raceName')} 正赛 Pace 分布统计图")
 
                 elif cmd == "/car":
                     if not f1cosmos:
@@ -1431,6 +1601,18 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                     loop = _aio.get_running_loop()
                     text, md = await loop.run_in_executor(None, _partial(f1cosmos.format_destructors, arg, SEASON))
                     await reply_md(message, text, md)
+                    # 附事故成本柱图（车手榜/车队榜）
+                    try:
+                        from common.chart_factory import render_destructors_chart
+                        p = await loop.run_in_executor(
+                            None, _partial(render_destructors_chart, SEASON, f1cosmos=f1cosmos))
+                        if p:
+                            import os as _os
+                            qq_bot.send_image_url(
+                                f"{RATING_BASE_URL}/exports/{_os.path.basename(p)}",
+                                content=f"💥 {SEASON} 事故维修成本统计图")
+                    except Exception:
+                        pass
 
                 elif cmd == "/predict":
                     # 统计模型预测（直接调模型，不走LLM；排位+正赛名次+概率）
@@ -1509,16 +1691,28 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         await reply_text(message, "当前没有进行中的车手评分\n比赛周会自动创建本场投票，正赛开始1小时后开放打分!")
                         return
                     open_races.sort(key=lambda x: (x[1]["season"], x[1]["round"]))
-                    race_key, race = open_races[-1]
+                    # 背靠背分站：R+1 在 R 投票窗口内已被预创建（pending），
+                    # 优先指向"已开放投票"的最高 round 场次，全部未开放才给最新 pending
+                    # （取最后一条会锚定下一场 pending，数场投票窗口用户拿到的都是"尚未开启"）
+                    from datetime import datetime as _dt4, timezone as _tz4
+                    _now4 = _dt4.now(_tz4.utc)
+                    def _is_pending(race_entry):
+                        _oa = ratings_store.race_open_at(race_entry)
+                        return bool(_oa and _now4 < _oa)
+                    active = [x for x in open_races if not _is_pending(x[1])]
+                    pending = [x for x in open_races if _is_pending(x[1])]
+                    pool = active or pending
+                    pool.sort(key=lambda x: (x[1]["season"], x[1]["round"]))
+                    race_key, race = pool[-1]
                     link_base = f"{RATING_BASE_URL}/r/{race_key}"
                     # 比赛周预创建条目：未到开启时刻（正赛开始+1h）时提示开放时间，链接可先收藏
                     pending_tip = ""
                     try:
                         from datetime import timezone
-                        from zoneinfo import ZoneInfo
+                        from pytz import timezone as _ptz  # 容器 python:slim 无系统 tzdata，pytz 自带数据库
                         _oa = ratings_store.race_open_at(race)
                         if _oa and datetime.now(timezone.utc) < _oa:
-                            _bj = _oa.astimezone(ZoneInfo("Asia/Shanghai")).strftime('%m-%d %H:%M')
+                            _bj = _oa.astimezone(_ptz("Asia/Shanghai")).strftime('%m-%d %H:%M')
                             pending_tip = f"\n⏰ 投票将于 {_bj}（北京时间）开启（正赛开始1小时后），可先收藏链接"
                     except Exception:
                         pass

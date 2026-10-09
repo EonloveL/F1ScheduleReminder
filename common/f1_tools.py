@@ -56,6 +56,7 @@ F1_TOOLS = [
     {"type": "function", "function": {"name": "get_telemetry_chart", "description": "获取F1Cosmos遥测可视化仪表盘链接（网页内自选年份/分站/环节/车手，速度/油门/刹车曲线对比，分段与测速点分析）。遥测/圈速对比类问题时调用，把url放进回答", "parameters": {"type": "object", "properties": {"drivers": {"type": "string", "description": "车手列表（可选）"}, "gp": {"type": "string", "description": "分站名（可选）"}, "session": {"type": "string", "description": "环节（可选）"}, "lap": {"type": "integer", "description": "圈号（可选）"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_team_strengths", "description": "车队实力画像（数据推导，非主观）：从本赛季排位pace_index+完赛名次+FIA升级件计算——各车队 赛季/近期pace与趋势、按赛道下压力档/轮胎负荷档/高海拔的相对强弱（负值=该类型相对更强）、sunday_delta正赛兑现率（负=正赛强于排位=正赛节奏与轮胎管理代理指标）、升级件前后pace变化。team为车队名（中英文），留空返回全部车队。回答“某队为什么在X类赛道强/升级有没有用/谁正赛节奏好”类问题必须调用本工具拿数据说话，禁止凭印象声称车队特性", "parameters": {"type": "object", "properties": {"team": {"type": "string", "description": "车队名，留空为全部"}, "gp": {"type": "string", "description": "分站名（可选，给出则按该站赛道类型返回各队匹配强弱）"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_stint_analysis", "description": "正赛 stint 长距离节奏与轮胎衰减分析（OpenF1 数据，2023+ 含轮胎配方与每段起止圈；更早赛季用 Jolpica 兜底但无配方）：每位车手各 stint 的中位圈速、衰减斜率（ms/圈）、轮胎配方序列（红软/黄中/白硬）。gp 为分站名/轮次（留空=最近一场已完赛），driver 指定车手（留空=全场按最快 stint 排序）。问正赛节奏/轮胎管理/长距离速度/衰减/stint 表现时必须调用本工具拿数据，禁止凭印象回答", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "分站名或轮次（如 蒙扎/R13），留空取最近一场已完赛"}, "driver": {"type": "string", "description": "车手名（中英文/别名），留空为全场"}, "year": {"type": "integer", "description": "赛季年份，留空为当前赛季"}}, "required": []}}},
+    {"type": "function", "function": {"name": "get_race_tech_params", "description": "获取分站 FIA Power Unit Information 官方技术参数（2026 新规逐站发布，数值逐站不同禁止跨站套用）：每圈能量回收上限（正赛 Overtake 未激活/激活、排位、练习、出场圈分别的 MJ 值）、PU 功率削减率（kW/s）、Power Limited 距离、Overtake 超车模式检测线/激活线位置与跟车差距门槛、赛道中心线长度。问某站能量回收/功率限制/超车模式参数/Overtake 检测点在哪时必须调用本工具，禁止凭印象。gp为分站名（中英文/轮次R5），留空取下一站", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "分站名或轮次"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_championship_outlook", "description": "总冠军争夺推演：剩余赛程满分推算（正赛25/冲刺8）+ 理论存活判定 + 领跑者锁冠分站 + 两种概率数值（均匀随机蒙特卡洛的理论概率 / 名次制回归+残差蒙特卡洛的模型概率）。问\"谁还有理论夺冠可能/理论夺冠概率/总冠军概率/争冠形势\"时必须调用，给出具体数值，禁止只说定性判断", "parameters": {"type": "object", "properties": {}, "required": []}}},
 ]
 
@@ -169,10 +170,25 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         else:
             s = f1_api.get_current_standings(force_refresh=True)
         entries = QQGroupBot._parse_driver_standings(s.get("drivers") or {})
-        return {"season": int(year) if year else season,
-                "standings": [{"pos": e.get("position"), "driver": e.get("Driver", {}).get("familyName"),
-                               "team": (e.get("Constructors") or [{}])[0].get("name"),
-                               "points": e.get("points"), "wins": e.get("wins")} for e in entries]}
+        result = {"season": int(year) if year else season,
+                  "standings": [{"pos": e.get("position"), "driver": e.get("Driver", {}).get("familyName"),
+                                 "team": (e.get("Constructors") or [{}])[0].get("name"),
+                                 "points": e.get("points"), "wins": e.get("wins")} for e in entries]}
+        # 当前赛季积分榜附积分走势图（chart_md 由 L2 嵌图，多一张图多一分直观）
+        if not (year and int(year) != season):
+            try:
+                import os as _os
+                from .chart_factory import render_points_trend_chart
+                p = render_points_trend_chart(season, f1_api=f1_api)
+                base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
+                if p and base:
+                    fname = _os.path.basename(p)
+                    result["chart_md"] = f"![pic#800px #450px]({base}/exports/{fname})"
+                    result["note"] = ("chart_md 为本赛季车手积分走势图（逐站累计），"
+                                      "回答积分榜/争冠类问题时必须原文嵌入该图")
+            except Exception:
+                pass
+        return result
 
     def _ctr_standings(year=None):
         from common.qq_group_bot import QQGroupBot
@@ -202,13 +218,15 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         cm = CircuitsManager()
         gp = (gp or "").strip()
         race = None
+        gp_kw = None  # 解析后的干净赛道关键词（剥离年份/轮次 token）
         if gp:
             info = parse_race_query(gp)
+            gp_kw = info["gp"]
             race = find_race_for_query(f1_api, info["year"] or season,
                                        info["round"], info["gp"])
             if not race:
                 # 指定赛道不在赛历：直接按名称查本地库，不再静默替换为下一站
-                hit = cm.search_circuit(info["gp"] or gp)
+                hit = cm.search_circuit(gp_kw or gp)
                 if hit:
                     meta = hit[1]
                     return {"circuit": meta.get("name_en"), "circuit_id": hit[0],
@@ -221,20 +239,22 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
                             "corners": meta.get("corners"), "altitude_m": meta.get("altitude_m"),
                             "downforce": meta.get("downforce"), "tire_stress": meta.get("tire_stress"),
                             "env_note": meta.get("env_note"), "lap_record": meta.get("lap_record")}
-                return {"circuit": gp, "circuit_id": None, "race": None,
+                return {"circuit": gp_kw or gp, "circuit_id": None, "race": None,
                         "found_local": False, "needs_web_search": True,
-                        "search_hint": f"{gp} F1 circuit length corners lap record characteristics",
+                        "search_hint": f"{gp_kw or gp} F1 circuit length corners lap record characteristics",
                         "note": "本地赛道库与本赛季赛历均无此赛道，必须联网检索获取，"
                                 "禁止凭印象编造参数；回答中标注信息来自网络检索"}
         if not race:
             race = f1_api.get_next_race()
+        if not race:
+            return {"error": "本赛季已无剩余比赛，且未指定可解析的赛道/分站"}
         circuit = (race or {}).get("Circuit", {}) or {}
         cid = circuit.get("circuitId", "")
-        cname = circuit.get("circuitName", "") or gp
-        # 本地库：circuitId 直查 → 名称模糊查
+        cname = circuit.get("circuitName", "") or gp_kw or gp
+        # 本地库：circuitId 直查 → 名称模糊查（用解析后的干净关键词，原始输入可能含年份/轮次）
         meta = cm.get_circuit(cid) if cid else None
-        if not meta and (cname or gp):
-            hit = cm.search_circuit(gp or cname)
+        if not meta and (cname or gp_kw):
+            hit = cm.search_circuit(gp_kw or cname)
             if hit:
                 meta = hit[1]
         base = {"circuit": cname, "circuit_id": cid,
@@ -685,7 +705,20 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
                 target = target[0]
             key = canonical_team_key(target)
             return {"team": key, "profile": all_s.get(key) or {"error": f"无「{t}」数据"}}
-        return {"season": season, "teams": all_s}
+        result = {"season": season, "teams": all_s}
+        # 附车队实力雷达图（随赛季进程自动按累计成绩+升级件重算，文件名带轮次破缓存）
+        try:
+            import os as _os
+            from .chart_factory import render_team_strength_radar
+            p = render_team_strength_radar(season, f1_api=f1_api, f1cosmos=f1cosmos)
+            base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
+            if p and base:
+                result["chart_md"] = f"![pic#600px #540px]({base}/exports/{_os.path.basename(p)})"
+                result["note"] = ("chart_md 为车队实力雷达图（6维 min-max 归一化，外圈=更强），"
+                                  "回答车队实力对比类问题时必须原文嵌入该图")
+        except Exception:
+            pass
+        return result
 
     def _championship_outlook():
         """总冠军争夺推演（数学理论层 + 均匀MC理论概率 + 回归模型概率）"""
@@ -766,10 +799,48 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
             ({"driver_id": did, "driver": _disp(did), **v}
              for did, v in drivers_data.items() if v.get("best_stint_median_s")),
             key=lambda x: x["best_stint_median_s"])
-        return {"race": race.get("raceName"), "season": q_season, "round": round_num,
-                "ranking_by_best_stint": ranked[:10],
-                "note": "median_s=stint中位圈速(秒)；deg_ms_per_lap=衰减斜率(ms/圈，正=衰减)；"
-                        "avg_deg_ms=各stint衰减均值"}
+        result = {"race": race.get("raceName"), "season": q_season, "round": round_num,
+                  "ranking_by_best_stint": ranked[:10],
+                  "note": "median_s=stint中位圈速(秒)；deg_ms_per_lap=衰减斜率(ms/圈，正=衰减)；"
+                          "avg_deg_ms=各stint衰减均值"}
+        # pace 分布图（已完赛分站）：chart_url 交给 L2 以图片形式嵌入回答
+        if is_completed:
+            try:
+                import os as _os
+                from .chart_factory import render_pace_chart
+                p = render_pace_chart(q_season, round_num, race.get("raceName", ""),
+                                      f1_api=f1_api)
+                base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
+                if p and base:
+                    result["chart_url"] = f"{base}/exports/pace_chart_{q_season}_R{round_num}.png"
+                    result["chart_md"] = (f"![pic#800px #450px]({result['chart_url']})")
+                    result["note"] += ("；chart_md 为本场 pace 分布统计图（箱线图+轮胎配方着色+"
+                                       "中位差条形图），回答中必须用 chart_md 原文嵌入该图")
+            except Exception:
+                pass
+        return result
+
+    def _race_tech_params(gp=""):
+        """分站 FIA Power Unit Information 技术参数（FIADocsAPI 提供）"""
+        if not (f1cosmos and hasattr(f1cosmos, "get_event_pu_info")):
+            return {"error": "FIA文档数据源未启用"}
+        gp = (gp or "").strip()
+        race = None
+        if gp:
+            info = parse_race_query(gp)
+            race = find_race_for_query(f1_api, info["year"] or season,
+                                       info["round"], info["gp"])
+        if not race:
+            race = f1_api.get_next_race()
+        if not race:
+            return {"error": "本赛季已无剩余比赛，且未指定可解析的分站"}
+        race_name = race.get("raceName", "")
+        q_season = int(race.get("season", season) or season)
+        result = f1cosmos.get_event_pu_info(race_name, q_season)
+        if not result:
+            return {"race": race_name, "error": "该站 Power Unit Information 文档尚未发布"
+                                                "（通常比赛周四挂出）或不存在"}
+        return {"race": race_name, **result}
 
     return {
         "get_driver_standings": _drv_standings,
@@ -788,4 +859,5 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         "get_team_strengths": _team_strengths,
         "get_championship_outlook": _championship_outlook,
         "get_stint_analysis": _stint_analysis,
+        "get_race_tech_params": _race_tech_params,
     }

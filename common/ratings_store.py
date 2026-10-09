@@ -167,6 +167,16 @@ class RatingsStore:
                 self._save()
                 logger.info(f"评分已开启: {key} {race_name}"
                             + (f"（投票 {entry.get('open_at')} 开放）" if open_at else ""))
+            elif open_at:
+                # 赛程时间变更（延期/提前）：未开放且无票的条目同步更新 open_at，
+                # 防门控时刻过期（已开放/已有票的条目不动，避免改变进行中的规则）
+                race = self._data["races"][key]
+                new_oa = open_at.isoformat() if hasattr(open_at, "isoformat") else str(open_at)
+                if (not race.get("closed") and not race.get("votes")
+                        and race.get("open_at") != new_oa):
+                    race["open_at"] = new_oa
+                    self._save()
+                    logger.info(f"评分开启时刻随赛程更新: {key} → {new_oa}")
         return key
 
     @staticmethod
@@ -185,6 +195,15 @@ class RatingsStore:
     def get_race(self, key: str) -> Optional[Dict[str, Any]]:
         self._reload()
         return self._data["races"].get(key)
+
+    def mark_card_sent(self, key: str):
+        """标记该场次开启引导卡已发（自愈扫描据此判断补发，幂等）"""
+        with self._xlock():
+            self._data = self._load()
+            race = self._data["races"].get(key)
+            if race and not race.get("card_sent"):
+                race["card_sent"] = True
+                self._save()
 
     def get_or_create_token(self, key: str, member_openid: str) -> Optional[str]:
         """为成员生成/获取专属token；场次不存在或未开放返回None"""
@@ -344,18 +363,22 @@ class RatingsStore:
 
         closed_keys = []
         self._reload()
+        cur_season = now.year
         for key, race in list(self._data.get("races", {}).items()):
             if race.get("closed"):
                 continue
             rnd = int(race.get("round", 0))
             st = starts.get(rnd)
             race_end_passed = bool(st and now >= st + timedelta(hours=2 + close_hours))
+            # 跨赛季条目按赛季直接判陈旧（round 裸比会撞号）；本赛季内按比赛周口径
+            old_season = int(race.get("season") or cur_season) < cur_season
             superseded = bool(current_round and rnd < current_round)
-            if race_end_passed or superseded:
+            if race_end_passed or superseded or old_season:
                 if self.close_race(key):
                     closed_keys.append(key)
-                    logger.warning(f"陈旧评分场次已静默关闭: {key} "
-                                   f"({'正赛结束超' + str(close_hours) + 'h' if race_end_passed else '新比赛周开始'})")
+                    reason = ("跨赛季陈旧" if old_season else
+                              ('正赛结束超' + str(close_hours) + 'h' if race_end_passed else '新比赛周开始'))
+                    logger.warning(f"陈旧评分场次已静默关闭: {key} ({reason})")
         return closed_keys
 
     def season_dotd_board(self, season: int) -> List[tuple]:
