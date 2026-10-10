@@ -134,7 +134,7 @@ docker compose up -d
 | `MOONSHOT_API_KEY` / `DEEPSEEK_API_KEY` | 可选 | AI 问答（Kimi / DeepSeek，[platform.moonshot.cn](https://platform.moonshot.cn) / [platform.deepseek.com](https://platform.deepseek.com) 免费注册），不配则 @机器人 无 AI 回复 |
 | `TAVILY_API_KEY` / `BOCHA_API_KEY` | 可选 | 联网搜索增强 |
 | `ADMIN_OPENIDS` | 可选 | 管理员 openid（知识库审核 `/kb`） |
-| `OPENF1_USERNAME` / `OPENF1_PASSWORD` | 可选 | OpenF1 sponsor 账号，实时面板看实时档用 |
+| `OPENF1_USERNAME` / `OPENF1_PASSWORD` | 可选 | OpenF1 sponsor 账号（仅赛中实时场景需要，见下文「锁定窗口」说明） |
 
 完整配置项见 [deploy/.env.example](deploy/.env.example)，全部有中文注释。
 
@@ -177,6 +177,16 @@ Dockerfile 里已注释好阿里云镜像加速行，取消注释即可；`deplo
 | 升级件 / PU 用量 | FIA 官方文档（PDF 解析）· F1Cosmos |
 | 新闻聚合 | F1Cosmos |
 | LLM | Kimi（Moonshot）· DeepSeek |
+
+### 关于 OpenF1 锁定窗口与统计图配色
+
+OpenF1 对未认证用户在**现场环节窗口**（比赛周末各环节进行前后）返回 401，其余时间免费可用。本项目的图表链路按此设计，**零配置即可拿到完整功能**：
+
+- **赛后图表**（三联统计图/安全车时间线等）在正赛结束后生成，天然处于锁定窗口之外——含轮胎配方着色的彩色图零成本产出
+- 锁定窗口内生成的图表走 Jolpica 兜底（灰色、无配方着色）；OpenF1 恢复后自动升级为彩色正式版（兜底图写 `_fb` 日期戳文件名，互不遮挡）
+- 如果你想在**比赛进行中**实时拿到彩色配方图（实时面板场景），才需要 OpenF1 sponsor 订阅：`.env` 配置 `OPENF1_USERNAME` / `OPENF1_PASSWORD` 即可，代码已内置支持（token 1h 自动刷新、失败冷却）
+
+建议先零配置运行，实测赛后首波推送没问题就无需订阅。
 
 ## 项目结构
 
