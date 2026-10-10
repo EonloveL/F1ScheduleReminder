@@ -49,6 +49,8 @@ services:
       - TELEMETRY_PROXY=${TELEMETRY_PROXY:-}
       - TELEMETRY_BASE_URL=${TELEMETRY_BASE_URL:-}
       - LIVE_BASE_URL=${LIVE_BASE_URL:-}
+      - OPENF1_USERNAME=${OPENF1_USERNAME:-}
+      - OPENF1_PASSWORD=${OPENF1_PASSWORD:-}
     volumes:
       - ../data:/app/data
     networks:

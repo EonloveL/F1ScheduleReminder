@@ -83,6 +83,20 @@ def _pace_laps_jolpica(analyzer, season: int, round_num: int, why: str
             if sec and t.get("driverId"):
                 per_drv[t["driverId"]][n] = sec
     result: Dict[str, List[Tuple[float, str]]] = {}
+    # livetiming 配方映射（surname+lap → compound），让 Jolpica 兜底的 pace 图也能按配方着色
+    lt_compounds: Dict[str, List[Dict]] = {}
+    try:
+        from .livetiming_client import LiveTimingClient
+        lt_compounds = LiveTimingClient(f1_api=analyzer.f1_api).get_stints(season, round_num) or {}
+    except Exception:
+        pass
+
+    def _compound_of(surname: str, lap: int) -> str:
+        for s in lt_compounds.get(surname, []):
+            if s["lap_start"] <= lap <= s["lap_end"]:
+                return s["compound"]
+        return "UNKNOWN"
+
     for drv, lapmap in per_drv.items():
         surname = drv.replace("_", " ").split()[-1].lower()
         pits = drv_pits.get(drv, set())
@@ -92,11 +106,14 @@ def _pace_laps_jolpica(analyzer, season: int, round_num: int, why: str
             continue
         med = sorted(s for _, s in vals)[len(vals) // 2]
         valid = [s for n, s in vals if s <= med * OUTLIER_RATIO]
+        laps_of = [(n, s) for n, s in vals if s <= med * OUTLIER_RATIO]
         if len(valid) >= MIN_VALID_LAPS:
-            result[surname] = [(v, "UNKNOWN") for v in valid]
+            result[surname] = [(v, _compound_of(surname, n)) for n, v in laps_of]
     if not result:
         return None, f"{season} R{round_num} Jolpica 兜底无有效圈（OpenF1: {why}）"
-    logger.info(f"[chart] pace 圈速走 Jolpica 兜底（无配方着色）: {season} R{round_num}")
+    logger.info(f"[chart] pace 圈速走 Jolpica 兜底"
+                f"{'（livetiming 配方叠加）' if lt_compounds else '（无配方着色）'}: "
+                f"{season} R{round_num}")
     return result, ""
 
 
@@ -258,6 +275,7 @@ def _openf1_session_key(analyzer, season: int, round_num: int,
     try:
         from .stint_analysis import OPENF1_BASE
         resp = analyzer.session.get(f"{OPENF1_BASE}/sessions", params=params,
+                                    headers=analyzer._of1_headers() or None,
                                     timeout=20)
         data = resp.json()
         if not isinstance(data, list) or not data:
@@ -293,10 +311,10 @@ def _race_entries(f1_api, season: int, round_num: int) -> List[Dict[str, Any]]:
 
 def _strategy_stints(analyzer, season: int, round_num: int,
                      entries: List[Dict[str, Any]]) -> Optional[Dict[str, List[Dict]]]:
-    """策略时间线数据：OpenF1 stints 主源（含配方）；
-    OpenF1 不可达/无数据时 Jolpica laps+pitstops 兜底（无配方，灰色块——
-    服务器网络环境兜底，2026-10-09 用户提出服务器可能无法访问 OpenF1）。
-    返回 {surname: [{"lap_start","lap_end","compound"}]} 或 None"""
+    """策略时间线数据：OpenF1 stints 主源（含配方）→ F1 livetiming 静态归档兜底
+    （TimingAppData 含配方！OpenF1 401/赛中锁定时的配方来源，2026-10-09 实证雪邦可用）
+    → Jolpica pitstops 兜底（无配方，灰色块）。
+    返回 {surname: [{"lap_start","lap_end","compound","stint"}]} 或 None"""
     sk = _openf1_session_key(analyzer, season, round_num, "Race")
     stints = analyzer._openf1_get("stints", {"session_key": sk}) if sk else []
     drivers = analyzer._openf1_get("drivers", {"session_key": sk}) if sk else []
@@ -314,6 +332,15 @@ def _strategy_stints(analyzer, season: int, round_num: int,
                                      "stint": _safe_int(s.get("stint_number"), 0) or 0})
         if out:
             return dict(out)
+    # livetiming 兜底（含配方）：OpenF1 401/不可达时的配方数据源
+    try:
+        from .livetiming_client import LiveTimingClient
+        lt_stints = LiveTimingClient(f1_api=analyzer.f1_api).get_stints(season, round_num)
+        if lt_stints:
+            logger.info(f"[chart] 策略走 livetiming 归档兜底（含配方）: {season} R{round_num}")
+            return lt_stints
+    except Exception as e:
+        logger.warning(f"[chart] livetiming 兜底失败: {e}")
     # Jolpica 兜底（无配方）：只取 pitstops（轻量单页）——策略时间线只需要进站圈
     # 画 stint 边界，不需要圈速（laps 端点分页重且慢，2026-10-09 实证超时）
     try:
@@ -375,6 +402,13 @@ def render_strategy_chart(season: int, round_num: int, race_name: str = "",
     data = _strategy_stints(analyzer, season, round_num, entries)
     if not data:
         return None
+    # Jolpica 兜底渲染（无配方全灰）：写日期戳 fb 文件名，OpenF1 恢复后仍可生成正式版
+    _is_fb = all(s["compound"] == "UNKNOWN" for lst in data.values() for s in lst)
+    if _is_fb:
+        from datetime import datetime as _dt
+        path = path.replace(".png", f"_fb{_dt.now().strftime('%m%d')}.png")
+        if os.path.exists(path):
+            return path
 
     finish_order = [_norm_name(e.get("driver_name"))
                     for e in sorted(entries, key=lambda x: _safe_int(x.get("position"), 99) or 99)
@@ -489,6 +523,15 @@ def render_race_report_chart(season: int, round_num: int, race_name: str = "",
     strat = _strategy_stints(analyzer, season, round_num, entries)
     if not pace or not entries:
         return None
+    # Jolpica 兜底渲染（pace 或策略任一全灰）：写日期戳 fb 文件名，OpenF1 恢复后仍可出正式版
+    _fb_pace = all(c == "UNKNOWN" for laps in pace.values() for _, c in laps)
+    _fb_strat = (not strat) or all(s["compound"] == "UNKNOWN"
+                                   for lst in strat.values() for s in lst)
+    if _fb_pace or _fb_strat:
+        from datetime import datetime as _dt
+        path = path.replace(".png", f"_fb{_dt.now().strftime('%m%d')}.png")
+        if os.path.exists(path):
+            return path
 
     import numpy as np
     fig, plt = _setup_dark_fig((16, 15))
@@ -748,6 +791,13 @@ def render_pace_chart(season: int, round_num: int, race_name: str = "",
     if not pace:
         logger.info(f"[chart] pace 数据不可用: {err}")
         return None
+    # Jolpica 兜底渲染（无配方全灰）：写日期戳 fb 文件名，OpenF1 恢复后仍可生成正式版
+    _is_fb = all(c == "UNKNOWN" for laps in pace.values() for _, c in laps)
+    if _is_fb:
+        from datetime import datetime as _dt
+        path = path.replace(".png", f"_fb{_dt.now().strftime('%m%d')}.png")
+        if os.path.exists(path):
+            return path
 
     import numpy as np
     from matplotlib import pyplot as plt
@@ -1159,9 +1209,16 @@ def render_sc_timeline(season: int, round_num: int, race_name: str = "",
     from .stint_analysis import StintAnalyzer
     analyzer = StintAnalyzer(f1_api=f1_api)
     sk = _openf1_session_key(analyzer, season, round_num, "Race")
-    if not sk:
-        return None
-    rc = analyzer._openf1_get("race_control", {"session_key": sk})
+    rc = analyzer._openf1_get("race_control", {"session_key": sk}) if sk else []
+    if not rc:
+        # livetiming 归档兜底（OpenF1 401/赛中锁定时）
+        try:
+            from .livetiming_client import LiveTimingClient
+            rc = LiveTimingClient(f1_api=analyzer.f1_api).get_race_control(season, round_num)
+            if rc:
+                logger.info(f"[chart] 安全车时间线走 livetiming 兜底: {season} R{round_num}")
+        except Exception:
+            pass
     if not rc:
         return None
     # 事件配对：deploy → in/clear/ending/resume

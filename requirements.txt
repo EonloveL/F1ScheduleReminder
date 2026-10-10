@@ -29,3 +29,7 @@ cryptography>=41.0.0
 
 # FIA官方文档PDF解析（升级件/PU用量）
 pdfplumber>=0.11.0
+
+# F1 livetiming 归档兜底（Chrome TLS 指纹伪装，部分机房 IP 被 F1 CDN 按指纹 403；
+# 未安装时自动回退 requests，装它能救活）
+curl-cffi>=0.7.0
