@@ -26,46 +26,19 @@ class OpenF1API:
         self.session.headers.update({
             'User-Agent': 'F1-Reminder-Bot/1.0'
         })
-        # OAuth2 认证（实时数据需要 sponsor 订阅；未配置则仅历史数据可用，
-        # 且比赛进行期间 OpenF1 会对所有请求返回 401）
-        self._username = os.getenv("OPENF1_USERNAME", "")
-        self._password = os.getenv("OPENF1_PASSWORD", "")
-        self._token = None
-        self._token_expires_at = 0  # epoch 秒
-        self._auth_enabled = bool(self._username and self._password)
-        if self._auth_enabled:
-            logger.info("[OpenF1] OAuth2 认证已配置")
-        else:
-            logger.info("[OpenF1] 未配置 OPENF1_USERNAME/PASSWORD，仅历史数据可用（比赛进行中接口会401）")
+        # OAuth2 认证统一走 openf1_auth 共享提供器（1h 过期刷新 + 失败冷却 5min）
+        from .openf1_auth import get_openf1_auth
+        self._auth = get_openf1_auth()
+        self._auth_enabled = self._auth.enabled
 
     # ==================== OAuth2 认证 ====================
 
     def _get_token(self) -> Optional[str]:
-        """获取/刷新 OAuth2 access_token（1小时过期，提前60秒刷新）"""
-        if not self._auth_enabled:
-            return None
-        import time as _time
-        if self._token and _time.time() < self._token_expires_at - 60:
-            return self._token
-        try:
-            resp = requests.post(
-                TOKEN_URL,
-                data={"username": self._username, "password": self._password},
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-                timeout=15,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            token = data.get("access_token")
-            expires_in = int(data.get("expires_in") or 3600)  # key存在但值为null时防 TypeError
-            if token:
-                self._token = token
-                self._token_expires_at = _time.time() + expires_in
-                logger.info("[OpenF1] access_token 获取成功")
-                return token
-        except requests.RequestException as e:
-            logger.error(f"[OpenF1] 获取token失败: {e}")
-        return None
+        """获取/刷新 OAuth2 access_token（委托 openf1_auth 共享提供器；
+        保留方法签名兼容既有调用方）"""
+        h = self._auth.headers().get("Authorization", "")
+        # 不用 str.removeprefix（3.9+），项目兼容 3.8
+        return h[7:] if h.startswith("Bearer ") else None
 
     def _make_request(self, endpoint: str, params: Dict = None) -> Optional[List[Dict]]:
         """
@@ -79,12 +52,9 @@ class OpenF1API:
             API响应数据列表，失败返回None
         """
         url = f"{BASE_URL}/{endpoint}"
-        headers = {}
-        if self._auth_enabled:
-            token = self._get_token()
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-                headers["accept"] = "application/json"
+        headers = dict(self._auth.headers()) if self._auth_enabled else {}
+        if headers:
+            headers["accept"] = "application/json"
         try:
             response = self.session.get(url, params=params, headers=headers or None, timeout=10)
             response.raise_for_status()

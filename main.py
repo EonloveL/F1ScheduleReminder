@@ -180,6 +180,8 @@ HELP_TEXT = """🏎️ F1机器人命令列表：
 /racechart [地点/R几] - 赛后三联统计图（pace+轮胎策略+名次变化）
 /trend - 本赛季车手积分走势图
 /pitstops [地点/R几] - 进站时长车队对比箱线图
+/sc [地点/R几] - 安全车/VSC/红旗事件时间线
+/qualigap [地点/R几] - 排位差距图（杆位金色，含冲刺排位 /qualigap 雪邦 sq）
 /telemetry - 遥测/圈速/赛果可视化分析（F1Cosmos仪表盘链接）
 /setdriver 车手名 - 添加关注车手（如 /setdriver 维斯塔潘，最多3位）
 /setteam 车队名 - 添加关注车队（如 /setteam 法拉利，最多3支）
@@ -258,6 +260,8 @@ HELP_MARKDOWN = """## 🏎️ F1机器人指令面板
 /racechart [地点/R几] 赛后三联统计图（pace+轮胎策略+名次变化）
 /trend 本赛季车手积分走势图
 /pitstops [地点/R几] 进站时长车队对比箱线图
+/sc [地点/R几] 安全车/VSC/红旗事件时间线
+/qualigap [地点/R几] 排位差距图（含冲刺排位，加 sq 后缀）
 /car [车队] 事故维修成本
 
 **⭐ 车手评分**
@@ -456,7 +460,7 @@ COMMAND_NAMES = frozenset([
     "help", "drivers", "teams", "calendar", "next", "last", "gp",
     "watch", "weather", "setdriver", "setteam", "me", "unbind", "news", "rate", "ratings", "dotd",
     "upgrades", "upgrade", "pu", "car", "clear", "live", "telemetry", "predict", "pace",
-    "racechart", "trend", "pitstops",
+    "racechart", "trend", "pitstops", "sc", "qualigap",
     "kb",
 ])
 
@@ -1528,7 +1532,15 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                             race = past[-1] if past else None
                         if not race:
                             return None, None
-                        if race.get("date", "") >= _dtx.now().date().isoformat():
+                        race_dt = None
+                        try:
+                            from datetime import timezone as _tzu2
+                            race_dt = _dtx.fromisoformat(
+                                f"{race['date']}T{race.get('time', '00:00:00Z').replace('Z', '')}"
+                            ).replace(tzinfo=_tzu2.utc)
+                        except Exception:
+                            pass
+                        if race_dt and _dtx.now(_tzu2.utc) < race_dt:
                             return race, None
                         p = render_pitstop_chart(SEASON, int(race["round"]),
                                                  race.get("raceName", ""), f1_api=f1_api)
@@ -1543,7 +1555,124 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                     else:
                         await reply_image(message,
                                           f"{RATING_BASE_URL}/exports/pitstop_chart_{SEASON}_R{race['round']}.png",
-                                          content=f"🛠 {race.get('raceName')} 进站时长车队对比")
+                                          content=f"🔧 {race.get('raceName')} 进站时长车队对比")
+
+                elif cmd == "/sc":
+                    # 安全车/VSC/红旗事件时间线（OpenF1 race_control 主源，livetiming 兜底；
+                    # 无事件返回 None——本站干净不出图）
+                    import asyncio as _aio
+                    loop = _aio.get_running_loop()
+
+                    def _gen_sc():
+                        from common.chart_factory import render_sc_timeline
+                        from common.f1_api import find_race_by_circuit
+                        from datetime import datetime as _dtx
+                        schedule = f1_api.get_schedule_for_year(SEASON) or []
+                        race = None
+                        if arg:
+                            import re as _re
+                            m = _re.search(r"^[Rr]\s?0*(\d{1,2})$", arg.strip())
+                            if m:
+                                race = next((r for r in schedule
+                                             if int(r.get("round", 0)) == int(m.group(1))), None)
+                            else:
+                                race = find_race_by_circuit(schedule, arg)
+                        else:
+                            today = _dtx.now().date().isoformat()
+                            past = [r for r in schedule
+                                    if r.get("date") and r["date"] < today]
+                            race = past[-1] if past else None
+                        if not race:
+                            return None, None
+                        race_dt = None
+                        try:
+                            from datetime import timezone as _tzu2
+                            race_dt = _dtx.fromisoformat(
+                                f"{race['date']}T{race.get('time', '00:00:00Z').replace('Z', '')}"
+                            ).replace(tzinfo=_tzu2.utc)
+                        except Exception:
+                            pass
+                        if race_dt and _dtx.now(_tzu2.utc) < race_dt:
+                            return race, None
+                        p = render_sc_timeline(SEASON, int(race["round"]),
+                                               race.get("raceName", ""), f1_api=f1_api)
+                        return race, p
+
+                    race, chart_path = await loop.run_in_executor(None, _gen_sc)
+                    if race is None:
+                        await reply_text(message, "未找到分站（用法：/sc 或 /sc 雪邦、/sc R16）")
+                    elif chart_path is None:
+                        await reply_text(message,
+                                         f"{race.get('raceName')} 本站无安全车/VSC/红旗事件（或分站未赛）")
+                    else:
+                        import os as _os
+                        await reply_image(message,
+                                          f"{RATING_BASE_URL}/exports/{_os.path.basename(chart_path)}",
+                                          content=f"🚩 {race.get('raceName')} 安全车事件时间线")
+
+                elif cmd == "/qualigap":
+                    # 排位/冲刺排位差距图（杆位金色；/qualigap 雪邦 sq 查冲刺排位）
+                    import asyncio as _aio
+                    loop = _aio.get_running_loop()
+
+                    def _gen_qg():
+                        from common.chart_factory import render_quali_gap_chart
+                        from common.f1_api import find_race_by_circuit
+                        from datetime import datetime as _dtx
+                        q = (arg or "").strip()
+                        stype = "qualifying"
+                        if q.lower() == "sq":
+                            # /qualigap sq：最近一场冲刺排位（无地名）
+                            stype = "sprint_qualifying"
+                            q = ""
+                        elif q.lower().endswith(" sq"):
+                            stype = "sprint_qualifying"
+                            q = q[:-3].strip()
+                        schedule = f1_api.get_schedule_for_year(SEASON) or []
+                        race = None
+                        if q:
+                            import re as _re
+                            m = _re.search(r"^[Rr]\s?0*(\d{1,2})$", q)
+                            if m:
+                                race = next((r for r in schedule
+                                             if int(r.get("round", 0)) == int(m.group(1))), None)
+                            else:
+                                race = find_race_by_circuit(schedule, q)
+                        else:
+                            today = _dtx.now().date().isoformat()
+                            past = [r for r in schedule
+                                    if r.get("date") and r["date"] < today]
+                            race = past[-1] if past else None
+                        if not race:
+                            return None, None, stype
+                        race_dt = None
+                        try:
+                            from datetime import timezone as _tzu2
+                            race_dt = _dtx.fromisoformat(
+                                f"{race['date']}T{race.get('time', '00:00:00Z').replace('Z', '')}"
+                            ).replace(tzinfo=_tzu2.utc)
+                        except Exception:
+                            pass
+                        if race_dt and _dtx.now(_tzu2.utc) < race_dt:
+                            return race, None, stype
+                        p = render_quali_gap_chart(SEASON, int(race["round"]),
+                                                   race.get("raceName", ""), f1_api=f1_api,
+                                                   session_type=stype)
+                        return race, p, stype
+
+                    race, chart_path, stype = await loop.run_in_executor(None, _gen_qg)
+                    if race is None:
+                        await reply_text(message, "未找到分站（用法：/qualigap 或 /qualigap 雪邦、/qualigap R16、/qualigap 雪邦 sq）")
+                    elif chart_path is None:
+                        _t0 = "冲刺排位" if stype == "sprint_qualifying" else "排位"
+                        await reply_text(message,
+                                         f"{race.get('raceName')} 暂无{_t0}成绩（分站未赛或{_t0}未进行）")
+                    else:
+                        import os as _os
+                        _tag = "冲刺排位" if stype == "sprint_qualifying" else "排位"
+                        await reply_image(message,
+                                          f"{RATING_BASE_URL}/exports/{_os.path.basename(chart_path)}",
+                                          content=f"⏱️ {race.get('raceName')} {_tag}差距图")
 
                 elif cmd == "/racechart":
                     # 赛后三联统计图（pace分布+轮胎策略时间线+名次变化）

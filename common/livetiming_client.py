@@ -42,6 +42,7 @@ BASE = "https://livetiming.formula1.com/static"
 
 
 def _norm_name(name: str) -> str:
+    """去组合符（São→Sao），供目录名候选生成"""
     s = unicodedata.normalize("NFKD", str(name or ""))
     return "".join(c for c in s if not unicodedata.combining(c))
 
@@ -94,20 +95,53 @@ class LiveTimingClient:
             logger.debug(f"[LiveTiming] {rel_path} 失败: {e}")
             return None
 
+    def _race_date(self, season: int, round_num: int) -> Optional[str]:
+        if not self.f1_api:
+            return None
+        try:
+            schedule = self.f1_api.get_schedule_for_year(season) or []
+            race = next((r for r in schedule
+                         if int(r.get("round", 0)) == round_num), None)
+            return race.get("date") if race else None
+        except Exception:
+            return None
+
+    def _ttl_for(self, season: int, round_num: int) -> Optional[int]:
+        """缓存 TTL：正赛日+1天前=30min（livetiming 归档赛中是持续更新的活文件，
+        永久缓存会把赛中残缺 stint/事件数据冻结——2026-10-10 review 实证）；
+        正赛日+1天后=永久（数据不可变）"""
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        rd = self._race_date(season, round_num)
+        if not rd:
+            return None
+        try:
+            race_day = _dt.strptime(rd, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            return None
+        return None if _dt.now(_tz.utc).date() > race_day + _td(days=1) else 0.5
+
     def get_race_file(self, season: int, round_num: int, filename: str
                       ) -> Optional[Dict[str, Any]]:
-        """取正赛归档文件（带缓存：命中永久缓存，未命中 24h 后重试）"""
+        """取正赛归档文件（缓存：正赛日+1天前 30min / 之后永久）"""
         cache_key = f"livetiming_{season}_{round_num}_{filename}"
         cached = self.cache.load(cache_key)
         if cached is not None:
             return cached or None
+        ttl = self._ttl_for(season, round_num)
         for cand in self._session_dir_candidates(season, round_num):
             data = self._fetch_json(f"{cand}/{filename}")
             if data is not None:
-                # 完赛不可变：永久缓存；空 dict 存 {} 标记“查过没有”防重复请求
-                self.cache.save(cache_key, data if data else {}, ttl_hours=None)
-                return data
-        self.cache.save(cache_key, {}, ttl_hours=24)  # 分站未赛/目录名未中：24h 后重试
+                if data:
+                    self.cache.save(cache_key, data, ttl_hours=ttl)
+                else:
+                    # 空 dict：源站真实空响应，短缓存防抖动，不当"查无此档"永久占位
+                    self.cache.save(cache_key, {}, ttl_hours=min(ttl or 24, 24))
+                return data or None
+        # 分站未赛/目录名未中：正赛日前 3h 短缓存（赛后需尽快重试），正赛日后 24h
+        rd = self._race_date(season, round_num)
+        from datetime import datetime as _dt, timezone as _tz
+        short_ttl = 3 if rd and rd >= _dt.now(_tz.utc).date().isoformat() else 24
+        self.cache.save(cache_key, {}, ttl_hours=short_ttl)
         return None
 
     # ---------- 解析 ----------
@@ -127,9 +161,16 @@ class LiveTimingClient:
             surname = num_to_surname.get(str(num))
             if not surname:
                 continue
+            raw_stints = line.get("Stints") or []
+            # Stints 可能是 dict 键控 {"0": {...}}——迭代 dict 会产出字符串键导致
+            # AttributeError 崩溃（2026-10-10 review 实证部分分站为此形态）
+            entries = (list(raw_stints.values()) if isinstance(raw_stints, dict)
+                       else raw_stints)
             stints = []
             lap_cursor = 1
-            for entry in line.get("Stints") or []:
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
                 comp = (entry.get("Compound") or "UNKNOWN").upper()
                 try:
                     n_laps = int(entry.get("TotalLaps", 0)) - int(entry.get("StartLaps", 0))
@@ -155,8 +196,13 @@ class LiveTimingClient:
         rc = self.get_race_file(season, round_num, "RaceControlMessages.json")
         if not rc or "Messages" not in rc:
             return None
+        messages = rc["Messages"]
+        # Messages 同样可能是 dict 键控 {"0": {...}}
+        entries = (list(messages.values()) if isinstance(messages, dict) else messages)
         out = []
-        for m in rc["Messages"]:
+        for m in entries:
+            if not isinstance(m, dict):
+                continue
             out.append({
                 "lap_number": m.get("Lap"),
                 "message": m.get("Message", ""),
@@ -175,11 +221,15 @@ class LiveTimingClient:
             if not isinstance(row, dict):
                 continue
             try:
+                rainfall = 1.0 if float(row.get("Rainfall") or 0) > 0 else 0.0
+            except (TypeError, ValueError):
+                rainfall = 0.0
+            try:
                 out.append({
                     "date": ts,
                     "air_temperature": float(row.get("AirTemp", 0) or 0),
                     "track_temperature": float(row.get("TrackTemp", 0) or 0),
-                    "rainfall": 1 if str(row.get("Rainfall", "0")) not in ("0", "0.0") else 0,
+                    "rainfall": rainfall,
                     "wind_speed": float(row.get("WindSpeed", 0) or 0),
                     "humidity": float(row.get("Humidity", 0) or 0),
                 })

@@ -57,6 +57,9 @@ F1_TOOLS = [
     {"type": "function", "function": {"name": "get_team_strengths", "description": "车队实力画像（数据推导，非主观）：从本赛季排位pace_index+完赛名次+FIA升级件计算——各车队 赛季/近期pace与趋势、按赛道下压力档/轮胎负荷档/高海拔的相对强弱（负值=该类型相对更强）、sunday_delta正赛兑现率（负=正赛强于排位=正赛节奏与轮胎管理代理指标）、升级件前后pace变化。team为车队名（中英文），留空返回全部车队。回答“某队为什么在X类赛道强/升级有没有用/谁正赛节奏好”类问题必须调用本工具拿数据说话，禁止凭印象声称车队特性", "parameters": {"type": "object", "properties": {"team": {"type": "string", "description": "车队名，留空为全部"}, "gp": {"type": "string", "description": "分站名（可选，给出则按该站赛道类型返回各队匹配强弱）"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_stint_analysis", "description": "正赛 stint 长距离节奏与轮胎衰减分析（OpenF1 数据，2023+ 含轮胎配方与每段起止圈；更早赛季用 Jolpica 兜底但无配方）：每位车手各 stint 的中位圈速、衰减斜率（ms/圈）、轮胎配方序列（红软/黄中/白硬）。gp 为分站名/轮次（留空=最近一场已完赛），driver 指定车手（留空=全场按最快 stint 排序）。问正赛节奏/轮胎管理/长距离速度/衰减/stint 表现时必须调用本工具拿数据，禁止凭印象回答", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "分站名或轮次（如 蒙扎/R13），留空取最近一场已完赛"}, "driver": {"type": "string", "description": "车手名（中英文/别名），留空为全场"}, "year": {"type": "integer", "description": "赛季年份，留空为当前赛季"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_race_tech_params", "description": "获取分站 FIA Power Unit Information 官方技术参数（2026 新规逐站发布，数值逐站不同禁止跨站套用）：每圈能量回收上限（正赛 Overtake 未激活/激活、排位、练习、出场圈分别的 MJ 值）、PU 功率削减率（kW/s）、Power Limited 距离、Overtake 超车模式检测线/激活线位置与跟车差距门槛、赛道中心线长度。问某站能量回收/功率限制/超车模式参数/Overtake 检测点在哪时必须调用本工具，禁止凭印象。gp为分站名（中英文/轮次R5），留空取下一站", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "分站名或轮次"}}, "required": []}}},
+    {"type": "function", "function": {"name": "get_safety_car_events", "description": "获取分站正赛安全车/VSC/红旗事件时间线（部署圈数-结束圈数+原因消息+统计），OpenF1 race_control 主源、F1 livetiming 归档兜底（含 chart_md 时间线图可嵌入回答）。问某站安全车出动/VSC/红旗/事故中断时必须调用本工具，禁止凭印象编造圈数。gp为分站名（中英文/轮次R5），留空取最近一场已完赛", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "分站名或轮次"}, "year": {"type": "integer", "description": "赛季年份，留空为当前赛季"}}, "required": []}}},
+    {"type": "function", "function": {"name": "get_race_charts", "description": "获取分站可视化统计图表（返回 chart_md 图片链接，必须原文嵌入回答展示给用户）。chart 类型：race_report=赛后三联图（pace分布+轮胎策略+名次变化，默认）、pace=正赛pace分布箱线图、strategy=轮胎策略时间线（按配方着色）、positions=发车→完赛名次变化、quali_gap=排位差距（杆位金色）、sprint_quali_gap=冲刺排位差距、pitstop=进站时长车队对比箱线图。问某站 pace 分布/轮胎策略/名次变化/排位差距/进站耗时/赛后统计图时必须调用本工具并嵌入 chart_md，禁止只说「没有图」。gp为分站名（中英文/轮次R5），留空取最近一场已完赛", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "分站名或轮次"}, "chart": {"type": "string", "description": "图表类型：race_report(默认)/pace/strategy/positions/quali_gap/sprint_quali_gap/pitstop"}}, "required": []}}},
+    {"type": "function", "function": {"name": "get_destructors", "description": "获取车手/车队事故维修成本统计（destructors，部件申报价×更换数量估算）+ 事故成本柱图（chart_md 必须原文嵌入）。query 留空=全赛季车手榜+车队榜；query 为车手或车队名（中英文）= 该对象分站明细。问事故成本/修车费用/谁撞车最多/撞车损失时必须调用，禁止凭印象", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "车手或车队名，留空为全部"}, "year": {"type": "integer", "description": "赛季年份，留空为当前赛季"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_championship_outlook", "description": "总冠军争夺推演：剩余赛程满分推算（正赛25/冲刺8）+ 理论存活判定 + 领跑者锁冠分站 + 两种概率数值（均匀随机蒙特卡洛的理论概率 / 名次制回归+残差蒙特卡洛的模型概率）。问\"谁还有理论夺冠可能/理论夺冠概率/总冠军概率/争冠形势\"时必须调用，给出具体数值，禁止只说定性判断", "parameters": {"type": "object", "properties": {}, "required": []}}},
 ]
 
@@ -611,6 +614,165 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
                     "跨赛道对比必须使用pace_index或同赛道历年对比",
         }
 
+    def _safety_car_events(gp="", year=None):
+        """安全车/VSC/红旗事件（chart_factory.get_sc_events 共享提取）"""
+        from datetime import datetime as _dt
+        from .chart_factory import get_sc_events, render_sc_timeline
+        from .f1_api import find_race_by_circuit
+        q_season = int(year) if year else season
+        schedule = f1_api.get_schedule_for_year(q_season) or []
+        race = None
+        if gp:
+            import re as _re
+            m = _re.search(r"^[Rr]\s?0*(\d{1,2})$", str(gp).strip())
+            if m:
+                race = next((r for r in schedule if int(r.get("round", 0)) == int(m.group(1))), None)
+            else:
+                race = find_race_by_circuit(schedule, str(gp))
+        else:
+            today = _dt.now().date().isoformat()
+            past = [r for r in schedule if r.get("date") and r["date"] < today]
+            race = past[-1] if past else None
+        if not race:
+            return {"error": f"未找到分站（{gp or '最近已完赛'}）"}
+        # 未赛判定按正赛开始时间戳（正赛日当天完赛后可正常查询——
+        # 按日期字符串比较会把正赛日全天误挡，2026-10-10 review 实证）
+        from datetime import timezone as _tzu2
+        race_dt = None
+        try:
+            rt = race.get("time", "00:00:00Z").replace("Z", "")
+            race_dt = _dt.fromisoformat(f"{race['date']}T{rt}").replace(tzinfo=_tzu2.utc)
+        except Exception:
+            pass
+        if race_dt and _dt.now(_tzu2.utc) < race_dt:
+            return {"race": race.get("raceName"), "error": "分站未赛，无安全车事件"}
+        evts = get_sc_events(q_season, int(race["round"]), f1_api)
+        if evts is None:
+            # 双源皆不可达：诚实报"数据不可用"，禁止断言本站干净
+            return {"race": race.get("raceName"), "data_available": False,
+                    "error": "安全车数据源当前不可用",
+                    "note": "OpenF1 当前 401（现场环节锁定，赛后恢复）且 livetiming 归档不可达，"
+                            "无法确认本站安全车/VSC/红旗事件。禁止断言'本站干净/无安全车'，"
+                            "应如实告知数据暂不可用并建议赛后重试"}
+        kind_cn = {"sc": "安全车SC", "vsc": "虚拟安全车VSC", "red": "红旗"}
+        result = {"race": race.get("raceName"), "season": q_season,
+                  "round": int(race["round"]),
+                  "counts": {"sc": sum(1 for e in evts if e["kind"] == "sc"),
+                             "vsc": sum(1 for e in evts if e["kind"] == "vsc"),
+                             "red_flag": sum(1 for e in evts if e["kind"] == "red")},
+                  "events": [{"type": kind_cn.get(e["kind"], e["kind"]),
+                              "deploy_lap": e["start_lap"], "end_lap": e["end_lap"],
+                              "duration_laps": e["end_lap"] - e["start_lap"],
+                              "reason": e["message"]} for e in evts]}
+        if not evts:
+            result["note"] = "本站无安全车/VSC/红旗事件记录"
+        else:
+            result["note"] = "事件按部署圈排序；duration_laps 为持续圈数（红旗为标记值非实际停赛时长）"
+        # 时间线图（有事件才出图；chart_md 由 L2 嵌图）
+        try:
+            import os as _os
+            base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
+            if base and evts:
+                p = render_sc_timeline(q_season, int(race["round"]),
+                                       race.get("raceName", ""), f1_api=f1_api)
+                if p:
+                    result["chart_md"] = (f"![pic#800px #260px]({base}/exports/"
+                                          f"{_os.path.basename(p)})")
+                    result["note"] += "；chart_md 为安全车事件时间线图，回答中必须原文嵌入该图"
+        except Exception:
+            pass
+        return result
+
+    def _race_charts(gp="", chart="race_report"):
+        """分站可视化图表（统一入口，chart_md 由 L2 嵌图）"""
+        from datetime import datetime as _dt
+        from .f1_api import find_race_by_circuit
+        from . import chart_factory as cf
+        q = (gp or "").strip()
+        chart = (chart or "race_report").strip().lower()
+        render_map = {
+            "race_report": cf.render_race_report_chart,
+            "pace": cf.render_pace_chart,
+            "strategy": cf.render_strategy_chart,
+            "positions": cf.render_positions_chart,
+            "pitstop": cf.render_pitstop_chart,
+        }
+        schedule = f1_api.get_schedule_for_year(season) or []
+        race = None
+        if q:
+            import re as _re
+            m = _re.search(r"^[Rr]\s?0*(\d{1,2})$", q)
+            race = next((r for r in schedule if int(r.get("round", 0)) == int(m.group(1))), None) if m \
+                else find_race_by_circuit(schedule, q)
+        else:
+            today = _dt.now().date().isoformat()
+            past = [r for r in schedule if r.get("date") and r["date"] < today]
+            race = past[-1] if past else None
+        if not race:
+            return {"error": f"未找到分站（{q or '最近已完赛'}）"}
+        # 未赛判定按正赛开始时间戳（正赛日当天完赛后可正常查询）
+        from datetime import timezone as _tzu2
+        race_dt = None
+        try:
+            rt = race.get("time", "00:00:00Z").replace("Z", "")
+            race_dt = _dt.fromisoformat(f"{race['date']}T{rt}").replace(tzinfo=_tzu2.utc)
+        except Exception:
+            pass
+        if race_dt and _dt.now(_tzu2.utc) < race_dt:
+            return {"race": race.get("raceName"), "error": "分站未赛，暂无统计数据"}
+        round_num = int(race["round"])
+        race_name = race.get("raceName", "")
+
+        if chart in ("quali_gap", "sprint_quali_gap"):
+            stype = "sprint_qualifying" if chart == "sprint_quali_gap" else "qualifying"
+            p = cf.render_quali_gap_chart(season, round_num, race_name,
+                                          f1_api=f1_api, session_type=stype)
+            kind_cn = "冲刺排位差距图" if stype == "sprint_qualifying" else "排位差距图"
+        elif chart in render_map:
+            p = render_map[chart](season, round_num, race_name, f1_api=f1_api)
+            kind_cn = {"race_report": "赛后三联统计图（pace分布/轮胎策略/名次变化）",
+                       "pace": "正赛pace分布箱线图", "strategy": "轮胎策略时间线",
+                       "positions": "名次变化图", "pitstop": "进站时长车队对比图"}[chart]
+        else:
+            return {"error": f"未知图表类型「{chart}」（可选 race_report/pace/strategy/positions/quali_gap/sprint_quali_gap/pitstop）"}
+        if not p:
+            return {"race": race_name, "error": f"{kind_cn}数据不可用（分站未赛或数据源未收录）"}
+
+        result = {"race": race_name, "season": season, "round": round_num,
+                  "chart_type": chart, "kind": kind_cn}
+        import os as _os
+        base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
+        if base:
+            result["chart_md"] = f"![pic#900px #600px]({base}/exports/{_os.path.basename(p)})"
+            result["note"] = (f"chart_md 为{kind_cn}，回答中必须原文嵌入该图（它是图片链接，"
+                              "QQ 会直接渲染成图），禁止只描述不嵌图")
+        else:
+            result["note"] = ("当前环境无公网图床（RATING_BASE_URL 未配置），chart_md 不可用，"
+                              "请以文字描述图表结论，禁止声称无图")
+        return result
+
+    def _destructors(query="", year=None):
+        """事故维修成本（destructors + 柱图，chart_md 由 L2 嵌图）"""
+        if not f1cosmos:
+            return {"error": "数据源未启用"}
+        q_season = int(year) if year else season
+        text, md = f1cosmos.format_destructors(query or "", q_season)
+        result = {"season": q_season, "formatted_text": text}
+        try:
+            import os as _os
+            from .chart_factory import render_destructors_chart
+            base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
+            if base:
+                p = render_destructors_chart(q_season, f1cosmos=f1cosmos)
+                if p:
+                    result["chart_md"] = (f"![pic#800px #600px]({base}/exports/"
+                                          f"{_os.path.basename(p)})")
+                    result["note"] = ("chart_md 为事故维修成本柱图（车手榜+车队榜），"
+                                      "回答中必须原文嵌入该图")
+        except Exception:
+            pass
+        return result
+
     _pred_model = None  # 进程内单例（模型权重/赛季数据集驻留内存，避免每次重建）
     import threading as _threading
     _pred_model_lock = _threading.Lock()  # 首次构建为分钟级重活，加锁防并发重复构建
@@ -894,4 +1056,7 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         "get_championship_outlook": _championship_outlook,
         "get_stint_analysis": _stint_analysis,
         "get_race_tech_params": _race_tech_params,
+        "get_safety_car_events": _safety_car_events,
+        "get_race_charts": _race_charts,
+        "get_destructors": _destructors,
     }

@@ -59,42 +59,11 @@ class StintAnalyzer:
         self.session = requests.Session()
         self.session.trust_env = False
         self.session.headers.update({"User-Agent": "Mozilla/5.0"})
-        # OpenF1 OAuth2（与 openf1_api.py 同口径）：比赛进行中全站接口对未认证用户返回 401
-        # （2026-10-09 新加坡 FP 期间服务器实测）。配置 OPENF1_USERNAME/PASSWORD 后
-        # 自动取 token 带 Bearer，否则退化为仅历史数据（赛中间隙 401 走 Jolpica 兜底）
-        import os as _os
-        self._of1_user = _os.getenv("OPENF1_USERNAME", "")
-        self._of1_pass = _os.getenv("OPENF1_PASSWORD", "")
-        self._of1_token = None
-        self._of1_token_exp = 0.0
-        self._of1_auth = bool(self._of1_user and self._of1_pass)
-        if self._of1_auth:
-            logger.info("[Stint] OpenF1 OAuth2 认证已配置")
 
     def _of1_headers(self) -> Dict[str, str]:
-        """取 Bearer token 头（1小时过期提前60s刷新）；未配置认证返回空"""
-        if not self._of1_auth:
-            return {}
-        import time as _t
-        if self._of1_token and _t.time() < self._of1_token_exp - 60:
-            return {"Authorization": f"Bearer {self._of1_token}"}
-        try:
-            resp = requests.post(
-                "https://api.openf1.org/token",
-                data={"username": self._of1_user, "password": self._of1_pass},
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-                timeout=15)
-            resp.raise_for_status()
-            d = resp.json()
-            token = d.get("access_token")
-            if token:
-                self._of1_token = token
-                self._of1_token_exp = _t.time() + int(d.get("expires_in") or 3600)
-                logger.info("[Stint] OpenF1 access_token 获取成功")
-                return {"Authorization": f"Bearer {token}"}
-        except Exception as e:
-            logger.warning(f"[Stint] OpenF1 token 获取失败: {e}")
-        return {}
+        """取 Bearer token 头（共享 openf1_auth 提供器：1h 过期刷新 + 失败冷却 5min）"""
+        from .openf1_auth import openf1_headers
+        return openf1_headers()
 
     # ---------- OpenF1 数据 ----------
 
@@ -113,7 +82,9 @@ class StintAnalyzer:
         if race_date:
             params["date_start"] = race_date
         else:
-            params["year"] = season
+            # 赛程查不到日期时宁缺勿错：按 year 兜底会静默锁定赛季第一场
+            # （与请求的 round 无关），错分站比没数据更糟（2026-10-10 review 实证）
+            return None
         try:
             resp = self.session.get(f"{OPENF1_BASE}/sessions", params=params,
                                     headers=self._of1_headers() or None, timeout=20)
@@ -132,13 +103,16 @@ class StintAnalyzer:
         # 边缘抖动，2026-10-09 review 实证仅异常重试修不到目标场景）；
         # 429 限流读 Retry-After 退避（默认 20s），不做短间隔重试加重限流
         import time as _t
-        headers = self._of1_headers()
         for attempt in range(2):
+            headers = self._of1_headers()  # 每轮重取（token 可能恰好过期/首取失败）
             try:
                 resp = self.session.get(f"{OPENF1_BASE}/{endpoint}", params=params,
                                         headers=headers or None, timeout=30)
                 if resp.status_code == 429 and attempt == 0:
-                    wait = int(resp.headers.get("Retry-After", "20") or 20)
+                    try:
+                        wait = int(resp.headers.get("Retry-After", "20") or 20)
+                    except (TypeError, ValueError):
+                        wait = 20
                     logger.warning(f"[Stint] OpenF1 {endpoint} 限流(429)，{wait}s 后重试")
                     _t.sleep(min(wait, 30))
                     continue

@@ -967,19 +967,22 @@ class ReminderScheduler:
             ok = self.notify_bot.send_session_result(result, watch_driver_ids=watch_ids)
             if ok is not False and self.config.get('dm_session_result'):
                 self._send_dm_session_result(result)
-            # 排位赛成绩卡后附排位差距图（杆位金色+逐车手差距条形图）
-            if ok is not False and session.get('type') == 'qualifying' \
+            # 排位/冲刺排位成绩卡后附排位差距图（杆位金色+逐车手差距条形图）
+            if ok is not False and session.get('type') in ('qualifying', 'sprint_qualifying') \
                     and hasattr(self.notify_bot, 'send_image_url'):
                 try:
                     from .chart_factory import render_quali_gap_chart
                     _season = self.config.get('SEASON') or session['datetime'].year
                     p = render_quali_gap_chart(_season, int(session['round']),
-                                               session.get('race_name', ''), f1_api=self.f1_api)
+                                               session.get('race_name', ''), f1_api=self.f1_api,
+                                               session_type=session.get('type', 'qualifying'))
                     base_url = self.config.get('rating_base_url')
                     if p and base_url:
+                        _tag = "排位" if session.get('type') == 'qualifying' else "冲刺排位"
+                        import os as _os
                         self.notify_bot.send_image_url(
-                            f"{base_url}/exports/quali_gap_{_season}_R{session['round']}.png",
-                            content=f"⏱️ {session['race_name']} 排位差距图")
+                            f"{base_url}/exports/{_os.path.basename(p)}",
+                            content=f"⏱️ {session['race_name']} {_tag}差距图")
                 except Exception as e:
                     logger.warning(f"排位差距图推送失败（不影响主流程）: {e}")
             return ok is not False

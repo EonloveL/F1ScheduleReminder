@@ -285,21 +285,15 @@ class F1CosmosAPI:
         if i < 0:
             logger.warning("[F1Cosmos] destructors RSC 中未找到明细数组（页面结构可能变更）")
             return []
-        depth, end = 0, -1
-        for j in range(i, len(rsc)):
-            if rsc[j] == "[":
-                depth += 1
-            elif rsc[j] == "]":
-                depth -= 1
-                if depth == 0:
-                    end = j + 1
-                    break
-        if end < 0:
-            return []
+        # 用 JSONDecoder.raw_decode 原生解析（正确处理字符串值内的括号/转义），
+        # 替代手写括号平衡（字符串含 [ ] 会错位）
         try:
-            arr = json.loads(rsc[i:end])
+            arr, _ = json.JSONDecoder().raw_decode(rsc, i)
         except ValueError as e:
             logger.warning(f"[F1Cosmos] destructors 明细解析失败: {e}")
+            return []
+        if not isinstance(arr, list):
+            logger.warning(f"[F1Cosmos] destructors 解析结果非数组（页面结构变更）: {type(arr).__name__}")
             return []
 
         records = []
@@ -804,6 +798,14 @@ class F1CosmosAPI:
         note = "注：部件配额跟随赛车席位，季中换人由继任者沿用（FIA官方口径），被换下车手不再出现在表中"
         text += f"\n{note}\n"
         md += f"\r> {note}"
+        # 本站新申报标注（叠加自 FIA pu_new 文档：累计表周末阶段仍是上一站口径，
+        # 新申报件已按官方新件文档并入——2026-10-09 用户实证两文档存在时间差）
+        new_notes = [f"{e['last_name'] or e.get('driver_name', '?')}（{'、'.join(e['new_this_event'])}）"
+                     for e in latest.values() if e.get("new_this_event")]
+        if new_notes:
+            new_note = "↑ 本站新申报已计入（FIA New PU elements 文档）：" + "、".join(new_notes)
+            text += f"\n{new_note}\n"
+            md += f"\r> {new_note}"
         return text, md
 
     # ==================== PU 部件更换检测（赛后播报） ====================
@@ -921,31 +923,51 @@ class F1CosmosAPI:
         by_driver = defaultdict(lambda: [0.0, 0])
         by_team = defaultdict(lambda: [0.0, 0])
         for r in data:
-            by_driver[r["driver"]][0] += r["cost"]
-            by_driver[r["driver"]][1] += r.get("quantity") or 1
+            # 车手名规范化：全大写 token 转首字母大写（"LECLERC"→"Leclerc"），
+            # 混合大小写/de/van 粒子保持原样
+            dname = " ".join(w.capitalize() if w.isupper() and len(w) > 1 else w
+                             for w in r["driver"].split())
+            by_driver[dname][0] += r["cost"]
+            by_driver[dname][1] += r.get("quantity") or 1
             by_team[r["team"]][0] += r["cost"]
             by_team[r["team"]][1] += r.get("quantity") or 1
 
         if query:
-            # 车手/车队明细：子串匹配（英文全名/代码/车队名）
+            # 车手优先、车队在后（混合命中防串味）；
+            # 车手匹配收紧为 姓/全名/code 精确匹配（子串会把 "al" 命中 Albon+Alonso 混合），
+            # 中文车手名走 DRIVER_ALIASES_CN 映射；车队别名不参与车手匹配
             q = query.lower()
-            hits = [r for r in data
-                    if q in r["driver"].lower() or q == r["driver_code"].lower()
-                    or q in r["team"].lower()]
+            driver_q = DRIVER_ALIASES_CN.get(query, "").lower() or q
+            team_aliases = [str(a).lower() for a in self.alias_targets(query)] or [q]
+
+            def _hit_driver(r):
+                dl = r["driver"].lower()
+                last = dl.split()[-1] if dl else ""
+                return (dl == driver_q or last == driver_q
+                        or r["driver_code"].lower() == q)
+
+            def _hit_team(r):
+                tl = r["team"].lower()
+                return any(a in tl for a in team_aliases)
+
+            hits = [r for r in data if _hit_driver(r)]
+            if not hits:
+                hits = [r for r in data if _hit_team(r)]
             if not hits:
                 msg = f"{season} 事故成本中未找到「{query}」"
                 return f"{title}\n\n{msg}", f"## {title}\r\r{msg}"
             total = sum(r["cost"] for r in hits)
-            who = hits[0]["driver"] if q in hits[0]["driver"].lower() \
-                or q == hits[0]["driver_code"].lower() else hits[0]["team"]
+            who = hits[0]["driver"] if _hit_driver(hits[0]) else hits[0]["team"]
             text = f"{title} - {who}\n\n累计: {_fmt_money(total)}（{sum(r.get('quantity') or 1 for r in hits)}项）\n"
             md = f"## {title}\r\r**{who}** 累计 **{_fmt_money(total)}**（{sum(r.get('quantity') or 1 for r in hits)}项）\r\r"
-            hits.sort(key=lambda x: (x.get('round') or 0))
+            hits.sort(key=lambda x: (x.get("round") or 0))
             for r in hits:
                 line = f"R{r.get('round')} {r['gp_name']} · {r['component']} ×{r.get('quantity') or 1} — {_fmt_money(r['cost'])}"
                 text += line + "\n"
                 md += f"{line}\r"
-            md += "\r> 成本=FIA部件申报价×更换数量（估算口径，非官方账单）"
+            note = "成本=FIA部件申报价×更换数量（估算口径，非官方账单）"
+            text += f"\n（{note}）"
+            md += f"\r> {note}"
             return text, md
 
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
@@ -956,7 +978,7 @@ class F1CosmosAPI:
             rank = medals.get(i, f"**{i}.**")
             line = f"{rank} {d} — {_fmt_money(cost)}（{cnt}项）"
             text += f"{i}. {d} — {_fmt_money(cost)}（{cnt}项）\n"
-            md += f"{rank} **{d.title()}** — {_fmt_money(cost)}（{cnt}项）\r"
+            md += f"{rank} **{d}** — {_fmt_money(cost)}（{cnt}项）\r"
         text += "\n车队榜:\n"
         md += "\r**车队榜**\r"
         for i, (t, (cost, cnt)) in enumerate(
