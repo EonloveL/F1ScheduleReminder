@@ -1207,25 +1207,35 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         await reply_md(message, HELP_TEXT, HELP_MARKDOWN)
 
                 elif cmd == "/drivers":
-                    standings = f1_api.get_current_standings()
+                    import asyncio as _aio
+                    loop = _aio.get_running_loop()
+                    standings, provisional = await loop.run_in_executor(
+                        None, f1_api.get_standings_with_projection)
                     entries = QQGroupBot._parse_driver_standings(standings.get("drivers") or {})
                     if entries:
+                        prov_text = f"\n⚠️ {provisional['note']}" if provisional else ""
+                        prov_md = f"\r\r> ⚠️ {provisional['note']}" if provisional else ""
                         await reply_md(
                             message,
-                            QQGroupBot.format_driver_standings(QQGroupBot, entries),
-                            QQGroupBot.format_driver_standings_md(QQGroupBot, entries),
+                            QQGroupBot.format_driver_standings(QQGroupBot, entries) + prov_text,
+                            QQGroupBot.format_driver_standings_md(QQGroupBot, entries) + prov_md,
                         )
                     else:
                         await reply_text(message, "暂无车手积分榜数据")
 
                 elif cmd == "/teams":
-                    standings = f1_api.get_current_standings()
+                    import asyncio as _aio
+                    loop = _aio.get_running_loop()
+                    standings, provisional = await loop.run_in_executor(
+                        None, f1_api.get_standings_with_projection)
                     entries = QQGroupBot._parse_constructor_standings(standings.get("constructors") or {})
                     if entries:
+                        prov_text = f"\n⚠️ {provisional['note']}" if provisional else ""
+                        prov_md = f"\r\r> ⚠️ {provisional['note']}" if provisional else ""
                         await reply_md(
                             message,
-                            QQGroupBot.format_constructor_standings(QQGroupBot, entries),
-                            QQGroupBot.format_constructor_standings_md(QQGroupBot, entries),
+                            QQGroupBot.format_constructor_standings(QQGroupBot, entries) + prov_text,
+                            QQGroupBot.format_constructor_standings_md(QQGroupBot, entries) + prov_md,
                         )
                     else:
                         await reply_text(message, "暂无车队积分榜数据")
@@ -1700,7 +1710,15 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                             race = past[-1] if past else None
                         if not race:
                             return None, None
-                        if race.get("date", "") >= _dtx.now().date().isoformat():
+                        race_dt = None
+                        try:
+                            from datetime import timezone as _tzu2
+                            race_dt = _dtx.fromisoformat(
+                                f"{race['date']}T{race.get('time', '00:00:00Z').replace('Z', '')}"
+                            ).replace(tzinfo=_tzu2.utc)
+                        except Exception:
+                            pass
+                        if race_dt and _dtx.now(_tzu2.utc) < race_dt:
                             return race, None
                         p = render_race_report_chart(SEASON, int(race["round"]),
                                                      race.get("raceName", ""), f1_api=f1_api)
@@ -1763,7 +1781,15 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                             race = past[-1] if past else None
                         if not race:
                             return None, None
-                        if race.get("date", "") >= _dtx.now().date().isoformat():
+                        race_dt = None
+                        try:
+                            from datetime import timezone as _tzu2
+                            race_dt = _dtx.fromisoformat(
+                                f"{race['date']}T{race.get('time', '00:00:00Z').replace('Z', '')}"
+                            ).replace(tzinfo=_tzu2.utc)
+                        except Exception:
+                            pass
+                        if race_dt and _dtx.now(_tzu2.utc) < race_dt:
                             return race, None  # 未赛
                         p = render_pace_chart(SEASON, int(race["round"]),
                                               race.get("raceName", ""), f1_api=f1_api)

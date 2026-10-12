@@ -567,6 +567,10 @@ class F1APIManager:
         import threading as _th
         self._standings_sf_lock = _th.Lock()
         self._standings_fresh_ts = 0.0
+        # 积分榜预估投影：串行化锁 + 完赛位次实例记忆化（正结果10min/负结果2min）
+        self._projection_lock = _th.Lock()
+        self._standings_state_lock = _th.Lock()
+        self._classification_memo = {}
 
         # 初始化所有Provider
         self.providers: List[BaseF1Provider] = [
@@ -1161,7 +1165,303 @@ class F1APIManager:
             self.cache.save(f"standings_{season}", data, ttl_hours=12)
         except Exception:
             pass
+        self._observe_standings_sum(psum)
         return data, f"{name} (freshest)", psum
+
+    # ==================== 积分榜预估投影 ====================
+    # 冲刺赛/正赛结束到官方积分榜更新之间有空窗（f1api.dev 滞后 24-48h）。空窗内本地
+    # 按完赛位次把冲刺/正赛积分加到官方榜，标记"预估"展示；官方更新后
+    # （积分总和 ≥ 基线+颁发分）自动停用投影。
+    # 基线 standings_state.json 取历史观测最大值（自愈：官方延迟超过补推轮询窗口也能跟上）。
+
+    SPRINT_POINTS = [8, 7, 6, 5, 4, 3, 2, 1]
+    RACE_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1]
+
+    @staticmethod
+    def _standings_state_path() -> str:
+        return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "data", "standings_state.json")
+
+    def _read_standings_baseline(self) -> float:
+        try:
+            with open(self._standings_state_path(), encoding="utf-8") as f:
+                return float(json.load(f).get("last_points_sum") or 0.0)
+        except Exception:
+            return 0.0
+
+    def _observe_standings_sum(self, psum: float):
+        """观测到官方积分总和时更新基线（只增不减，合并保留其他字段，原子写）"""
+        try:
+            if not psum:
+                return
+            with self._standings_state_lock:
+                state = {}
+                try:
+                    with open(self._standings_state_path(), encoding="utf-8") as f:
+                        state = json.load(f)
+                except Exception:
+                    pass
+                if psum <= float(state.get("last_points_sum") or 0.0):
+                    return
+                state["last_points_sum"] = psum
+                state["updated"] = datetime.now().isoformat()
+                path = self._standings_state_path()
+                tmp = path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(state, f, ensure_ascii=False)
+                os.replace(tmp, path)
+        except Exception as e:
+            logger.debug(f"积分榜基线观测写入失败: {e}")
+
+    def _pending_points_sessions(self, schedule: List[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """找出最近一站已结束、可能未计入官方积分榜的计分环节（冲刺/正赛，按时间序）"""
+        now = datetime.now(timezone.utc)
+        pending = []
+        for race in (schedule if schedule is not None else self.get_schedule()):
+            for s in self.get_all_sessions(race):
+                if s["type"] not in ("sprint", "race"):
+                    continue
+                est_minutes = 60 if s["type"] == "sprint" else 150
+                end = s["datetime"] + timedelta(minutes=est_minutes)
+                if end >= now or end < now - timedelta(hours=72):
+                    continue
+                pending.append({"round": s["round"], "type": s["type"],
+                                "name": s["name"], "race_name": s.get("race_name", "")})
+        if not pending:
+            return []
+        max_round = max(s["round"] for s in pending)
+        return [s for s in pending if s["round"] == max_round]
+
+    def _openf1_classification(self, session: Dict[str, Any],
+                               schedule: List[Dict[str, Any]] = None,
+                               openf1_sessions: List[Dict[str, Any]] = None) -> Optional[List[Dict[str, Any]]]:
+        """OpenF1 session_result 实时完赛位次（冲刺/正赛，方格旗后即可得，10min 实例记忆化）"""
+        if not self.openf1_enabled:
+            return None
+        memo_key = (str(session["round"]), session["type"])
+        import time as _t
+        cached = self._classification_memo.get(memo_key)
+        if cached and _t.time() - cached[0] < (600 if cached[1] else 120):
+            return cached[1] or None
+        entries = self._openf1_classification_fetch(session, schedule, openf1_sessions)
+        self._classification_memo[memo_key] = (_t.time(), entries or [])
+        return entries
+
+    def _openf1_classification_fetch(self, session, schedule, openf1_sessions):
+        expected_name = self.OPENF1_SESSION_NAME_MAP.get(session["type"])
+        if not expected_name:
+            return None
+        try:
+            target_dt = None
+            for race in (schedule if schedule is not None else self.get_schedule()):
+                if str(race.get("round")) != str(session["round"]):
+                    continue
+                for s in self.get_all_sessions(race):
+                    if s["type"] == session["type"]:
+                        target_dt = s["datetime"]
+            if not target_dt:
+                return None
+            if openf1_sessions is None:
+                openf1_sessions = self.openf1.get_sessions(year=self.season)
+            best_key, best_diff = None, None
+            for s in openf1_sessions:
+                if s.get("session_name") != expected_name:
+                    continue
+                try:
+                    start = datetime.fromisoformat(s["date_start"].replace("Z", "+00:00"))
+                except Exception:
+                    continue
+                diff = abs((start - target_dt).total_seconds())
+                if diff < 6 * 3600 and (best_diff is None or diff < best_diff):
+                    best_key, best_diff = s.get("session_key"), diff
+            if not best_key:
+                return None
+            result = self.openf1.get_session_result(best_key)
+            if not result:
+                return None
+            drivers = {d.get("driver_number"): d for d in self.openf1.get_drivers(best_key)}
+            entries = []
+            for r in result:
+                pos = r.get("position")
+                if not pos:
+                    continue
+                meta = drivers.get(r.get("driver_number")) or {}
+                entries.append({"position": int(pos),
+                                "driver_name": meta.get("full_name", ""),
+                                "driver_code": meta.get("name_acronym", ""),
+                                "team_name": meta.get("team_name", ""),
+                                "points": None})
+            entries.sort(key=lambda x: x["position"])
+            return entries or None
+        except Exception as e:
+            logger.warning(f"[projection] OpenF1 完赛位次获取失败: {e}")
+            return None
+
+    def _fast_classification(self, session: Dict[str, Any],
+                             schedule: List[Dict[str, Any]] = None,
+                             openf1_sessions: List[Dict[str, Any]] = None) -> Optional[List[Dict[str, Any]]]:
+        """计分环节完赛位次快速链：OpenF1(实时) → f1api.dev/Jolpica（existing get_session_results）"""
+        entries = self._openf1_classification(session, schedule, openf1_sessions)
+        if entries:
+            return entries
+        result = self.get_session_results(int(session["round"]), session["type"], retries=0)
+        return (result or {}).get("entries") or None
+
+    @staticmethod
+    def _awarded_points(entries: List[Dict[str, Any]], table: List[int]) -> float:
+        """本场实发总分：entries 带官方 points 时用之（覆盖半程减半计分等特例），
+        否则按位次表满额求和。2025 起最快圈加分已取消，无需考虑 FL"""
+        official = []
+        for e in entries[:len(table)]:
+            try:
+                official.append(float(e.get("points")))
+            except (TypeError, ValueError):
+                official = None
+                break
+        if official is not None and any(official):
+            return sum(official)
+        return float(sum(table[:min(len(entries), len(table))]))
+
+    @staticmethod
+    def _norm_name(s: str) -> str:
+        import unicodedata
+        return unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower().strip()
+
+    @staticmethod
+    def _fmt_points(v: float) -> str:
+        v = round(v, 1)
+        return str(int(v)) if v == int(v) else str(v)
+
+    def _apply_session_points(self, standings: Dict[str, Any], entries: List[Dict[str, Any]],
+                              table: List[int], count_win: bool) -> float:
+        """把一场计分环节按位次表加到官方榜（原地修改），返回本场颁发总分（未匹配车手不计）
+        entries 带官方 points 时优先用官方分值（覆盖半程减半等特例）"""
+        lists = ((standings.get("drivers") or {}).get("MRData", {})
+                 .get("StandingsTable", {}).get("StandingsLists") or [])
+        drv_entries = lists[0].get("DriverStandings", []) if lists else []
+        if not drv_entries:
+            return 0.0
+        by_family, by_code = {}, {}
+        for e in drv_entries:
+            d = e.get("Driver", {})
+            by_family[self._norm_name(d.get("familyName", ""))] = e
+            if d.get("code"):
+                by_code[self._norm_name(d["code"])] = e
+
+        def _find_driver(ent):
+            parts = self._norm_name(ent.get("driver_name", "")).split()
+            # 多词姓氏兼容（de Vries 等）：依次试 1~3 词后缀
+            for n in (1, 2, 3):
+                if len(parts) >= n:
+                    hit = by_family.get(" ".join(parts[-n:]))
+                    if hit:
+                        return hit
+            return by_code.get(self._norm_name(ent.get("driver_code", "")))
+
+        awarded = 0.0
+        for i, ent in enumerate(entries):
+            if i >= len(table):
+                break
+            try:
+                pts = float(ent.get("points"))
+            except (TypeError, ValueError):
+                pts = table[i]
+            if not pts:
+                continue
+            drv = _find_driver(ent)
+            if not drv:
+                continue
+            drv["points"] = self._fmt_points(float(drv.get("points", 0) or 0) + pts)
+            awarded += pts
+            if count_win and i == 0:
+                drv["wins"] = str(int(drv.get("wins", 0) or 0) + 1)
+            # 车队积分：经由车手榜的车手→车队映射累加（规避双源队名不一致）
+            c_lists = ((standings.get("constructors") or {}).get("MRData", {})
+                       .get("StandingsTable", {}).get("StandingsLists") or [])
+            ctr_entries = c_lists[0].get("ConstructorStandings", []) if c_lists else []
+            team_name = (drv.get("Constructors") or [{}])[0].get("name", "")
+            for ce in ctr_entries:
+                if ce.get("Constructor", {}).get("name") == team_name:
+                    ce["points"] = self._fmt_points(float(ce.get("points", 0) or 0) + pts)
+                    if count_win and i == 0:
+                        ce["wins"] = str(int(ce.get("wins", 0) or 0) + 1)
+                    break
+        # 按投影积分重排名次（同分保持官方原顺序——countback 数据不全时的稳妥近似）
+        drv_entries.sort(key=lambda e: -float(e.get("points", 0) or 0))
+        for rank, e in enumerate(drv_entries, 1):
+            e["position"] = str(rank)
+        c_lists = ((standings.get("constructors") or {}).get("MRData", {})
+                   .get("StandingsTable", {}).get("StandingsLists") or [])
+        ctr_entries = c_lists[0].get("ConstructorStandings", []) if c_lists else []
+        ctr_entries.sort(key=lambda e: -float(e.get("points", 0) or 0))
+        for rank, e in enumerate(ctr_entries, 1):
+            e["position"] = str(rank)
+        return awarded
+
+    def get_standings_with_projection(self, force_refresh: bool = False) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        """官方积分榜 + 空窗期未入账环节（冲刺/正赛）的本地预估投影。
+
+        已入账判定：官方积分总和 ≥ 基线（上次已知官方总和）+ 本场实发分——积分总和
+        赛季内单调不减，判定与观测解耦（禁止用观测值推高基线后再比较，否则官方更新
+        后 72h 窗口内必然双计）。
+
+        Returns:
+            (standings, provisional_info|None)；provisional_info 非空时 standings 为投影副本，
+            含 _provisional 标记（sessions/note），调用方应展示 note 且禁止写缓存
+        """
+        with self._projection_lock:  # 串行化：L1 并行工具/指令并发共用下游缓存与基线文件
+            standings = self.get_current_standings(force_refresh=force_refresh)
+            if not standings or not (standings.get("drivers") or standings.get("constructors")):
+                return standings, None
+            official_sum = self._standings_points_sum(standings)
+            # 观测先于判定：新部署自举基线=当前官方总和（保守不投影至多一场，随后正常）
+            self._observe_standings_sum(official_sum)
+            baseline = self._read_standings_baseline()
+            if not baseline:
+                return standings, None
+            schedule = self.get_schedule()
+            pending = self._pending_points_sessions(schedule)
+            if not pending:
+                return standings, None
+            import copy
+            # OpenF1 全赛季 session 列表单次拉取（冲刺+正赛同 pending 时复用）
+            openf1_sessions = None
+            if self.openf1_enabled:
+                try:
+                    openf1_sessions = self.openf1.get_sessions(year=self.season) or []
+                except Exception as _e:
+                    logger.warning(f"[projection] OpenF1 sessions 拉取失败: {_e}")
+                    openf1_sessions = []
+            projected = None
+            applied = []
+            running = baseline
+            for sess in pending:
+                entries = self._fast_classification(sess, schedule, openf1_sessions)
+                if not entries:
+                    continue
+                table = self.SPRINT_POINTS if sess["type"] == "sprint" else self.RACE_POINTS
+                awarded_full = self._awarded_points(entries, table)
+                if official_sum >= running + awarded_full - 0.5:
+                    # 官方已含本场积分
+                    running += awarded_full
+                    continue
+                if projected is None:
+                    projected = copy.deepcopy(standings)
+                got = self._apply_session_points(projected, entries, table,
+                                                 count_win=(sess["type"] == "race"))
+                if got:
+                    applied.append(sess)
+                    official_sum += got
+                    running += awarded_full
+            if not applied or projected is None:
+                return standings, None
+            names = "、".join(f"R{s['round']}{'冲刺赛' if s['type'] == 'sprint' else '正赛'}"
+                              for s in applied)
+            note = (f"{names}积分按当前完赛位次预估计入（官方积分榜更新可能有延迟），"
+                    "待FIA官方积分榜发布后以其为准")
+            projected["_provisional"] = {"sessions": applied, "note": note}
+            logger.info(f"[projection] 积分榜预估投影已应用: {names}")
+            return projected, projected["_provisional"]
 
     def get_current_standings(self, force_refresh: bool = False) -> Dict[str, Any]:
         """

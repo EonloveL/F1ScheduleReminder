@@ -39,15 +39,33 @@ def _median(vals):
     return vals[mid] if n % 2 else (vals[mid - 1] + vals[mid]) / 2
 
 
+_UPGRADE_CORE_COMPONENTS = (
+    "floor", "diffuser", "sidepod", "coke", "engine cover",
+    "front wing", "rear wing", "beam wing", "nose", "chassis", "suspension",
+)
+_UPGRADE_MAJOR_PACKAGE_MIN = 3
+_UPGRADE_MAJOR_MAX_PER_TEAM = 8
+
+
+def _upgrade_type_class(type_str: str) -> str:
+    t = (type_str or "").strip().lower()
+    if t.startswith("performance") or any(
+            k in t for k in ("flow conditioning", "local load", "mechanical setup", "drag reduction")):
+        return "performance"
+    if t.startswith("circuit") or "cooling" in t or "balance range" in t:
+        return "circuit_specific"
+    return "other"
+
+
 # ===== 工具 schema =====
 F1_TOOLS = [
-    {"type": "function", "function": {"name": "get_driver_standings", "description": "获取F1车手积分榜（排名/姓名/车队/积分/胜场）。year为赛季年份（如2025），留空为当前赛季；历史赛季同样可用（1950年至今）", "parameters": {"type": "object", "properties": {"year": {"type": "integer", "description": "赛季年份，留空为当前赛季"}}, "required": []}}},
-    {"type": "function", "function": {"name": "get_constructor_standings", "description": "获取F1车队积分榜。year为赛季年份（如2025），留空为当前赛季", "parameters": {"type": "object", "properties": {"year": {"type": "integer", "description": "赛季年份，留空为当前赛季"}}, "required": []}}},
+    {"type": "function", "function": {"name": "get_driver_standings", "description": "获取F1车手积分榜（排名/姓名/车队/积分/胜场）。year为赛季年份（如2025），留空为当前赛季；历史赛季同样可用（1950年至今）。冲刺/正赛刚结束而官方积分榜未更新时，返回含预估积分的投影榜并附 provisional 字段说明，回答必须提及该预估口径", "parameters": {"type": "object", "properties": {"year": {"type": "integer", "description": "赛季年份，留空为当前赛季"}}, "required": []}}},
+    {"type": "function", "function": {"name": "get_constructor_standings", "description": "获取F1车队积分榜。year为赛季年份（如2025），留空为当前赛季；刚结束的冲刺/正赛积分未入账时返回预估投影并附 provisional 字段，回答必须提及", "parameters": {"type": "object", "properties": {"year": {"type": "integer", "description": "赛季年份，留空为当前赛季"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_next_race", "description": "获取下一站比赛（名称/赛道/各环节北京时间）", "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {"name": "get_race_results", "description": "获取某站某环节成绩完整排名。session可选fp1/fp2/fp3/qualifying/sprint/race，默认race；year为赛季年份（如2025），留空为当前赛季，历史赛季同样可用", "parameters": {"type": "object", "properties": {"round": {"type": "integer", "description": "分站轮次"}, "session": {"type": "string", "description": "环节"}, "year": {"type": "integer", "description": "赛季年份，留空为当前赛季"}}, "required": ["round"]}}},
     {"type": "function", "function": {"name": "get_season_results", "description": "获取一个赛季已完成各站正赛成绩。year为赛季年份（如2025），留空为当前赛季（仅最近10站、每站前10）；指定year时返回该赛季全部已完成站次，每站名次由top_n控制：问冠军/冠军榜传1（默认），问冠亚季军/领奖台传3，问亚军传2，问积分区传10，问完整排名传20。用于分析车手积分/名次趋势或整理历史赛季成绩", "parameters": {"type": "object", "properties": {"year": {"type": "integer", "description": "赛季年份，留空为当前赛季"}, "top_n": {"type": "integer", "description": "每站返回前N名，指定year时默认1"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_pu_quota", "description": "获取每位车手动力单元各部件用量及总量，评估超额罚退风险。year为赛季年份（如2023），留空为当前赛季；历史赛季返回该赛季末的累计用量快照（FIA官方文档，2019年起有；2019-2025含MGU-H列，2026起取消MGU-H）", "parameters": {"type": "object", "properties": {"year": {"type": "integer", "description": "赛季年份，留空为当前赛季"}}, "required": []}}},
-    {"type": "function", "function": {"name": "get_upgrades", "description": "获取赛车升级件明细（支持历史赛季、轮次与车队+分站组合）。gp_or_team为分站地点、车队名（中英文）、轮次（如R5）或其组合（如“法拉利 蒙扎”），留空则取下一站；year为赛季年份（如2024），留空为当前赛季。只传year不传gp_or_team时，一次返回该赛季各车队升级数量汇总——“哪支车队升级最多”类问题务必用这种方式，不要逐站逐队多次调用", "parameters": {"type": "object", "properties": {"gp_or_team": {"type": "string", "description": "分站地点/车队名/轮次，可组合；只问赛季汇总时留空"}, "year": {"type": "integer", "description": "赛季年份"}}, "required": []}}},
+    {"type": "function", "function": {"name": "get_upgrades", "description": "获取赛车升级件明细（支持历史赛季、轮次与车队+分站组合）。gp_or_team为分站地点、车队名（中英文）、轮次（如R5）或其组合（如“法拉利 蒙扎”），留空则取下一站；year为赛季年份（如2024），留空为当前赛季。只传year不传gp_or_team时，一次返回该赛季各车队升级数量汇总（含 performance/circuit_specific 分类计数）+ major_upgrades 重点大升级清单（性能类核心部件：底盘/扩散器/侧箱/翼片/悬挂等，或单站多件套装升级包）——回答赛季升级问题时必须以 major_upgrades 为主体呈现、赛道适配小改一句带过，全量数量表格保留；“哪支车队升级最多”类问题务必用这种方式，不要逐站逐队多次调用", "parameters": {"type": "object", "properties": {"gp_or_team": {"type": "string", "description": "分站地点/车队名/轮次，可组合；只问赛季汇总时留空"}, "year": {"type": "integer", "description": "赛季年份"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_circuit_info", "description": "获取赛道档案（长度/弯数/正赛圈数/圈速纪录/下压力档/轮胎负荷档/海拔/时区/环境备注）。gp为赛道或分站名（中英文/轮次R5），留空取下一站。赛道介绍/特性/攻略类问题必须调用本工具，禁止凭印象编造赛道参数；返回 found_local=false 表示本地库无档案（如停办多年回归的赛道），L2 必须联网检索并在回答中标注信息来源", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "赛道或分站名（中英文/轮次）"}}, "required": []}}},
     {"type": "function", "function": {"name": "verify_lap_record", "description": "联网核查赛道F1正赛圈速纪录（以F1官网为权威源），返回官网纪录与本地数据对比，不一致时自动更新本地。gp为赛道或分站名（中英文），留空则核查下一站", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "赛道或分站名"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_upgrade_analysis_data", "description": "升级件效果分析数据包：某站各车队升级件申报明细（含意图/差异/工作原理备注）+ 相关车队近4站完赛名次与积分趋势 + 跨赛道可比的归一化圈速 pace_index（全场最快圈中位数/本队最快圈×100，=100为中位）。gp为分站名（中英文），留空取最近一站。用于深度分析升级效果；跨赛道圈速对比必须用pace_index，禁止直接比较不同赛道的绝对圈速", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "分站名"}}, "required": []}}},
@@ -168,15 +186,19 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
 
     def _drv_standings(year=None):
         from common.qq_group_bot import QQGroupBot
+        provisional = None
         if year and int(year) != season:
             s = f1_api.get_standings_for_year(int(year))
         else:
-            s = f1_api.get_current_standings(force_refresh=True)
+            s, provisional = f1_api.get_standings_with_projection(force_refresh=True)
         entries = QQGroupBot._parse_driver_standings(s.get("drivers") or {})
         result = {"season": int(year) if year else season,
                   "standings": [{"pos": e.get("position"), "driver": e.get("Driver", {}).get("familyName"),
                                  "team": (e.get("Constructors") or [{}])[0].get("name"),
                                  "points": e.get("points"), "wins": e.get("wins")} for e in entries]}
+        if provisional:
+            result["provisional"] = provisional["note"]
+            result["note"] = "积分榜含预估积分，回答时必须说明该预估口径（" + provisional["note"] + "）"
         # 当前赛季积分榜附积分走势图（chart_md 由 L2 嵌图，多一张图多一分直观）
         if not (year and int(year) != season):
             try:
@@ -187,22 +209,28 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
                 if p and base:
                     fname = _os.path.basename(p)
                     result["chart_md"] = f"![pic#800px #450px]({base}/exports/{fname})"
-                    result["note"] = ("chart_md 为本赛季车手积分走势图（逐站累计），"
-                                      "回答积分榜/争冠类问题时必须原文嵌入该图")
+                    chart_note = ("chart_md 为本赛季车手积分走势图（逐站累计），"
+                                  "回答积分榜/争冠类问题时必须原文嵌入该图")
+                    result["note"] = (result["note"] + "；" + chart_note) if result.get("note") else chart_note
             except Exception:
                 pass
         return result
 
     def _ctr_standings(year=None):
         from common.qq_group_bot import QQGroupBot
+        provisional = None
         if year and int(year) != season:
             s = f1_api.get_standings_for_year(int(year))
         else:
-            s = f1_api.get_current_standings(force_refresh=True)
+            s, provisional = f1_api.get_standings_with_projection(force_refresh=True)
         entries = QQGroupBot._parse_constructor_standings(s.get("constructors") or {})
-        return {"season": int(year) if year else season,
-                "standings": [{"pos": e.get("position"), "team": e.get("Constructor", {}).get("name"),
-                               "points": e.get("points"), "wins": e.get("wins")} for e in entries]}
+        result = {"season": int(year) if year else season,
+                  "standings": [{"pos": e.get("position"), "team": e.get("Constructor", {}).get("name"),
+                                 "points": e.get("points"), "wins": e.get("wins")} for e in entries]}
+        if provisional:
+            result["provisional"] = provisional["note"]
+            result["note"] = "积分榜含预估积分，回答时必须说明该预估口径（" + provisional["note"] + "）"
+        return result
 
     def _next_race():
         race = f1_api.get_next_race()
@@ -409,8 +437,9 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
             return _payload(_gp_items(race))
 
         q = (gp_or_team or "").strip()
-        if not q:
-            if year:
+        if not (info["round"] or info["gp"] or info["team"]):
+            # 空查询或纯年份（含 LLM 把年份误塞进 gp_or_team 的情况）
+            if year or info["year"]:
                 # 只给了年份：返回该赛季各车队升级数量汇总（一站答完"升级最多的车队"类问题，
                 # 避免逐站/逐队扇出几十次工具调用）
                 updates = f1cosmos._season_updates(q_season)
@@ -421,21 +450,58 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
                 per_team: Dict[str, dict] = {}
                 for u in updates:
                     key = canonical_team_key(u["team"])
-                    entry = per_team.setdefault(key, {"variants": {}, "gps": set()})
+                    entry = per_team.setdefault(key, {"variants": {}, "gps": set(),
+                                                      "cls": {"performance": 0, "circuit_specific": 0, "other": 0},
+                                                      "events": {}})
                     entry["variants"][u["team"]] = entry["variants"].get(u["team"], 0) + 1
                     if u.get("gp_name"):
                         entry["gps"].add(u["gp_name"])
+                    cls = _upgrade_type_class(u.get("type"))
+                    entry["cls"][cls] += 1
+                    if cls == "performance":
+                        ev_key = (u.get("round") or 0, u.get("gp_name") or "")
+                        ev = entry["events"].setdefault(ev_key, {"components": [], "core": False, "n": 0})
+                        ev["n"] += 1
+                        comp = (u.get("component") or "").strip()
+                        if comp and comp not in ev["components"]:
+                            ev["components"].append(comp)
+                        if any(k in comp.lower() for k in _UPGRADE_CORE_COMPONENTS):
+                            ev["core"] = True
                 summary = []
+                major_by_team: Dict[str, dict] = {}
                 for entry in per_team.values():
                     display = max(entry["variants"], key=entry["variants"].get)
                     summary.append({
                         "team": display,
                         "total_upgrades": sum(entry["variants"].values()),
                         "gps_with_upgrades": len(entry["gps"]),
+                        "performance": entry["cls"]["performance"],
+                        "circuit_specific": entry["cls"]["circuit_specific"],
+                        "other": entry["cls"]["other"],
                     })
+                    events = [{"round": rk, "gp": gname, "components": ev["components"][:6],
+                               "components_total": len(ev["components"]),
+                               "n_performance": ev["n"]}
+                              for (rk, gname), ev in entry["events"].items()
+                              if ev["core"] or ev["n"] >= _UPGRADE_MAJOR_PACKAGE_MIN]
+                    events.sort(key=lambda e: (e["round"], e["gp"]))
+                    rec = {"team": display, "major_events": events}
+                    if len(events) > _UPGRADE_MAJOR_MAX_PER_TEAM:
+                        keep = sorted(events, key=lambda e: (-e["n_performance"], e["round"]))[
+                               :_UPGRADE_MAJOR_MAX_PER_TEAM]
+                        keep.sort(key=lambda e: e["round"])
+                        rec["major_events"] = keep
+                        rec["more_events"] = len(events) - len(keep)
+                    major_by_team[display] = rec
                 summary.sort(key=lambda x: -x["total_upgrades"])
+                major_upgrades = [major_by_team[s["team"]] for s in summary]
                 return {"season": q_season, "team_upgrade_counts": summary,
-                        "note": "按FIA官方申报条目数统计；问某车队/某分站明细时再传 gp_or_team"}
+                        "major_upgrades": major_upgrades,
+                        "note": ("team_upgrade_counts=FIA全量申报条目数（表格照旧完整给出，已附 performance/circuit_specific/other 分类计数）；"
+                                 "major_upgrades=有显著提升效果的大升级（性能类核心部件：底盘/扩散器/侧箱/翼片/悬挂等，或单站≥3件的多件升级包），"
+                                 "每队最多列8个事件（超出以 more_events 计数），每事件 components 最多列6项（components_total 为实际件数）——"
+                                 "用户最关心这些，回答必须以 major_upgrades 为主体逐队呈现（分站+主要部件+差异说明），"
+                                 "Circuit Specific 赛道适配与可靠性小改只需一句带过；问某车队/某分站明细时再传 gp_or_team")}
             race = f1_api.get_next_race()
             if not race:
                 return {"error": "无下一站"}

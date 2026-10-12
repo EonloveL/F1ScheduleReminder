@@ -441,6 +441,12 @@ class OpenF1API:
         data = self._make_request("stints", params)
         return data if data else []
 
+    def get_session_result(self, session_key: int) -> List[Dict[str, Any]]:
+        """获取环节最终排名 (position / driver_number)，方格旗后实时可得"""
+        params = {"session_key": session_key}
+        data = self._make_request("session_result", params)
+        return data if data else []
+
     def get_laps(self, session_key: int, date_from: str = None) -> List[Dict[str, Any]]:
         """获取圈速数据 (lap_duration / lap_number / driver_number)，可用时间窗过滤"""
         params = {"session_key": session_key}
