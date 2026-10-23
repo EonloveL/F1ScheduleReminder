@@ -1165,14 +1165,16 @@ class F1APIManager:
             self.cache.save(f"standings_{season}", data, ttl_hours=12)
         except Exception:
             pass
-        self._observe_standings_sum(psum)
+        # 注意：此处不可调用 _observe_standings_sum——赛后 freshest 推送发生在 pending
+        # 窗口内，此时推进投影基线会让"官方已含本场"判定失效（72h 内双计）
         return data, f"{name} (freshest)", psum
 
     # ==================== 积分榜预估投影 ====================
     # 冲刺赛/正赛结束到官方积分榜更新之间有空窗（f1api.dev 滞后 24-48h）。空窗内本地
     # 按完赛位次把冲刺/正赛积分加到官方榜，标记"预估"展示；官方更新后
     # （积分总和 ≥ 基线+颁发分）自动停用投影。
-    # 基线 standings_state.json 取历史观测最大值（自愈：官方延迟超过补推轮询窗口也能跟上）。
+    # 基线 standings_state.json 的 season_sums[赛季]：只在无 pending 窗口时推进
+    # （窗口内推进基线会让"官方已含"判定失效，72h 内双计——2026-10-12 review 实证）。
 
     SPRINT_POINTS = [8, 7, 6, 5, 4, 3, 2, 1]
     RACE_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1]
@@ -1183,14 +1185,17 @@ class F1APIManager:
                             "data", "standings_state.json")
 
     def _read_standings_baseline(self) -> float:
+        """投影基线 = 当前赛季最近一次"无 pending 窗口"时的官方总和（赛季键控，跨年不串）"""
         try:
             with open(self._standings_state_path(), encoding="utf-8") as f:
-                return float(json.load(f).get("last_points_sum") or 0.0)
+                state = json.load(f)
+            return float((state.get("season_sums") or {}).get(str(self.season)) or 0.0)
         except Exception:
             return 0.0
 
     def _observe_standings_sum(self, psum: float):
-        """观测到官方积分总和时更新基线（只增不减，合并保留其他字段，原子写）"""
+        """无 pending 窗口时推进投影基线（只增不减，赛季键控，原子写）。
+        禁止在 pending 窗口内调用：官方更新后基线若含本场，"已入账"判定失效会双计"""
         try:
             if not psum:
                 return
@@ -1201,9 +1206,11 @@ class F1APIManager:
                         state = json.load(f)
                 except Exception:
                     pass
-                if psum <= float(state.get("last_points_sum") or 0.0):
+                season_sums = state.setdefault("season_sums", {})
+                key = str(self.season)
+                if psum <= float(season_sums.get(key) or 0.0):
                     return
-                state["last_points_sum"] = psum
+                season_sums[key] = psum
                 state["updated"] = datetime.now().isoformat()
                 path = self._standings_state_path()
                 tmp = path + ".tmp"
@@ -1229,8 +1236,8 @@ class F1APIManager:
                                 "name": s["name"], "race_name": s.get("race_name", "")})
         if not pending:
             return []
-        max_round = max(s["round"] for s in pending)
-        return [s for s in pending if s["round"] == max_round]
+        max_round = max(int(s["round"]) for s in pending)
+        return [s for s in pending if int(s["round"]) == max_round]
 
     def _openf1_classification(self, session: Dict[str, Any],
                                schedule: List[Dict[str, Any]] = None,
@@ -1263,7 +1270,7 @@ class F1APIManager:
                 return None
             if openf1_sessions is None:
                 openf1_sessions = self.openf1.get_sessions(year=self.season)
-            best_key, best_diff = None, None
+            best_key, best_diff, best_end = None, None, None
             for s in openf1_sessions:
                 if s.get("session_name") != expected_name:
                     continue
@@ -1274,8 +1281,17 @@ class F1APIManager:
                 diff = abs((start - target_dt).total_seconds())
                 if diff < 6 * 3600 and (best_diff is None or diff < best_diff):
                     best_key, best_diff = s.get("session_key"), diff
+                    best_end = s.get("date_end")
             if not best_key:
                 return None
+            # 长红旗/拖堂防护：环节实际未结束（date_end 未到）时 session_result 是进行中位次，
+            # 不能把赛中名次当完赛投影（150min 估时窗口对超时比赛过于乐观）
+            try:
+                if best_end and datetime.now(timezone.utc) < \
+                        datetime.fromisoformat(best_end.replace("Z", "+00:00")):
+                    return None
+            except Exception:
+                pass
             result = self.openf1.get_session_result(best_key)
             if not result:
                 return None
@@ -1310,9 +1326,10 @@ class F1APIManager:
     @staticmethod
     def _awarded_points(entries: List[Dict[str, Any]], table: List[int]) -> float:
         """本场实发总分：entries 带官方 points 时用之（覆盖半程减半计分等特例），
-        否则按位次表满额求和。2025 起最快圈加分已取消，无需考虑 FL"""
+        否则按位次表满额求和（按 position 索引，非枚举序号——DSQ/未列入会产生空位）。
+        2025 起最快圈加分已取消，无需考虑 FL"""
         official = []
-        for e in entries[:len(table)]:
+        for e in entries:
             try:
                 official.append(float(e.get("points")))
             except (TypeError, ValueError):
@@ -1320,7 +1337,15 @@ class F1APIManager:
                 break
         if official is not None and any(official):
             return sum(official)
-        return float(sum(table[:min(len(entries), len(table))]))
+        total = 0.0
+        for ent in entries:
+            try:
+                idx = int(ent.get("position")) - 1
+            except (TypeError, ValueError):
+                continue
+            if 0 <= idx < len(table):
+                total += table[idx]
+        return total
 
     @staticmethod
     def _norm_name(s: str) -> str:
@@ -1359,13 +1384,17 @@ class F1APIManager:
             return by_code.get(self._norm_name(ent.get("driver_code", "")))
 
         awarded = 0.0
-        for i, ent in enumerate(entries):
-            if i >= len(table):
-                break
+        for ent in entries:
+            try:
+                pos_idx = int(ent.get("position")) - 1  # 按名次索引位次表（DSQ/未列入会产生空位）
+            except (TypeError, ValueError):
+                continue
+            if not (0 <= pos_idx < len(table)):
+                continue
             try:
                 pts = float(ent.get("points"))
             except (TypeError, ValueError):
-                pts = table[i]
+                pts = table[pos_idx]
             if not pts:
                 continue
             drv = _find_driver(ent)
@@ -1373,7 +1402,7 @@ class F1APIManager:
                 continue
             drv["points"] = self._fmt_points(float(drv.get("points", 0) or 0) + pts)
             awarded += pts
-            if count_win and i == 0:
+            if count_win and pos_idx == 0:
                 drv["wins"] = str(int(drv.get("wins", 0) or 0) + 1)
             # 车队积分：经由车手榜的车手→车队映射累加（规避双源队名不一致）
             c_lists = ((standings.get("constructors") or {}).get("MRData", {})
@@ -1383,7 +1412,7 @@ class F1APIManager:
             for ce in ctr_entries:
                 if ce.get("Constructor", {}).get("name") == team_name:
                     ce["points"] = self._fmt_points(float(ce.get("points", 0) or 0) + pts)
-                    if count_win and i == 0:
+                    if count_win and pos_idx == 0:
                         ce["wins"] = str(int(ce.get("wins", 0) or 0) + 1)
                     break
         # 按投影积分重排名次（同分保持官方原顺序——countback 数据不全时的稳妥近似）
@@ -1414,14 +1443,18 @@ class F1APIManager:
             if not standings or not (standings.get("drivers") or standings.get("constructors")):
                 return standings, None
             official_sum = self._standings_points_sum(standings)
-            # 观测先于判定：新部署自举基线=当前官方总和（保守不投影至多一场，随后正常）
-            self._observe_standings_sum(official_sum)
+            # 先读基线再判定：基线必须是无 pending 窗口时的官方总和（赛季键控）。
+            # 窗口内推进基线会让"官方已含本场"判定失效（72h 内双计）
             baseline = self._read_standings_baseline()
             if not baseline:
+                # 新部署自举：基线=当前官方总和（保守不投影至多一场，随后正常）
+                self._observe_standings_sum(official_sum)
                 return standings, None
             schedule = self.get_schedule()
             pending = self._pending_points_sessions(schedule)
             if not pending:
+                # 窗口已关闭：官方总和必然已含最近一站，此刻推进基线是安全的
+                self._observe_standings_sum(official_sum)
                 return standings, None
             import copy
             # OpenF1 全赛季 session 列表单次拉取（冲刺+正赛同 pending 时复用）

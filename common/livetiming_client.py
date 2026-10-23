@@ -117,7 +117,7 @@ class LiveTimingClient:
         try:
             race_day = _dt.strptime(rd, "%Y-%m-%d").date()
         except (ValueError, TypeError):
-            return None
+            return 24  # 日期解析失败保守短缓存，防畸形日期把活文件永久冻结
         return None if _dt.now(_tz.utc).date() > race_day + _td(days=1) else 0.5
 
     def get_race_file(self, season: int, round_num: int, filename: str
@@ -189,14 +189,18 @@ class LiveTimingClient:
                 lap_cursor += n_laps
             if stints:
                 out[surname] = stints
-        return out or None
+        return out if out else ([] if app else None)
 
     def get_race_control(self, season: int, round_num: int) -> Optional[List[Dict]]:
-        """赛会消息（转成 OpenF1 race_control 同构：lap_number/message/category）"""
+        """赛会消息（转成 OpenF1 race_control 同构：lap_number/message/category）。
+        None=归档不可达/无此档；[]=归档可达但本站确实无消息（干净比赛）——
+        调用方（get_sc_events）据此区分"数据源不可用"与"无事件" """
         rc = self.get_race_file(season, round_num, "RaceControlMessages.json")
-        if not rc or "Messages" not in rc:
+        if rc is None:
             return None
-        messages = rc["Messages"]
+        messages = rc.get("Messages")
+        if messages is None:
+            return None  # 结构异常按不可达处理
         # Messages 同样可能是 dict 键控 {"0": {...}}
         entries = (list(messages.values()) if isinstance(messages, dict) else messages)
         out = []
@@ -209,12 +213,13 @@ class LiveTimingClient:
                 "category": m.get("Category", ""),
                 "date": m.get("Utc", ""),
             })
-        return out or None
+        return out
 
     def get_weather(self, season: int, round_num: int) -> Optional[List[Dict]]:
-        """天气（转成 OpenF1 weather 同构行：date/air_temperature/track_temperature/rainfall/wind_speed）"""
+        """天气（转成 OpenF1 weather 同构行：date/air_temperature/track_temperature/rainfall/wind_speed）。
+        None=不可达；[]=归档可达但无有效行"""
         w = self.get_race_file(season, round_num, "WeatherData.json")
-        if not w:
+        if w is None:
             return None
         out = []
         for ts, row in w.items():
@@ -235,4 +240,4 @@ class LiveTimingClient:
                 })
             except (TypeError, ValueError):
                 continue
-        return out or None
+        return out if out else []

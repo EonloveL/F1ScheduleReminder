@@ -10,6 +10,7 @@ OpenF1 OAuth2 共享认证提供器
 """
 import logging
 import os
+import threading
 import time
 from typing import Optional
 
@@ -30,53 +31,59 @@ class OpenF1Auth:
         self._token: Optional[str] = None
         self._token_expires_at = 0.0
         self._last_failure = 0.0
+        self._lock = threading.Lock()
         self.enabled = bool(self._username and self._password)
 
     def headers(self) -> dict:
-        """取 Bearer 头；未配置/冷却中/获取失败返回空 dict（调用方匿名降级）"""
+        """取 Bearer 头；未配置/冷却中/获取失败返回空 dict（调用方匿名降级）。
+        检查+刷新整体持锁：防多线程同时发现 token 过期并发 POST token 端点（限流风暴）"""
         if not self.enabled:
             return {}
-        if self._token and time.time() < self._token_expires_at - 60:
-            return {"Authorization": f"Bearer {self._token}"}
-        if time.time() - self._last_failure < _FAILURE_COOLDOWN:
+        with self._lock:
+            if self._token and time.time() < self._token_expires_at - 60:
+                return {"Authorization": f"Bearer {self._token}"}
+            if time.time() - self._last_failure < _FAILURE_COOLDOWN:
+                return {}
+            try:
+                resp = requests.post(
+                    TOKEN_URL,
+                    data={"username": self._username, "password": self._password},
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    timeout=15,
+                    proxies={"http": None, "https": None},  # 与业务 session 的 trust_env=False 口径一致
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                token = data.get("access_token")
+                expires_in = int(data.get("expires_in") or 3600)
+                if token:
+                    self._token = token
+                    self._token_expires_at = time.time() + expires_in
+                    self._last_failure = 0.0
+                    logger.info("[OpenF1Auth] access_token 获取成功")
+                    return {"Authorization": f"Bearer {token}"}
+            except Exception as e:
+                self._last_failure = time.time()
+                logger.warning(f"[OpenF1Auth] token 获取失败（{_FAILURE_COOLDOWN}s 冷却）: {e}")
             return {}
-        try:
-            resp = requests.post(
-                TOKEN_URL,
-                data={"username": self._username, "password": self._password},
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-                timeout=15,
-                proxies={"http": None, "https": None},  # 与业务 session 的 trust_env=False 口径一致
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            token = data.get("access_token")
-            expires_in = int(data.get("expires_in") or 3600)
-            if token:
-                self._token = token
-                self._token_expires_at = time.time() + expires_in
-                self._last_failure = 0.0
-                logger.info("[OpenF1Auth] access_token 获取成功")
-                return {"Authorization": f"Bearer {token}"}
-        except Exception as e:
-            self._last_failure = time.time()
-            logger.warning(f"[OpenF1Auth] token 获取失败（{_FAILURE_COOLDOWN}s 冷却）: {e}")
-        return {}
 
 
 _auth: Optional[OpenF1Auth] = None
+_auth_lock = threading.Lock()
 
 
 def get_openf1_auth() -> OpenF1Auth:
-    """模块级单例"""
+    """模块级单例（双重检查锁）"""
     global _auth
     if _auth is None:
-        _auth = OpenF1Auth()
-        if _auth.enabled:
-            logger.info("[OpenF1Auth] OAuth2 认证已配置")
-        else:
-            logger.info("[OpenF1Auth] 未配置 OPENF1_USERNAME/PASSWORD，匿名模式"
-                        "（现场环节窗口 OpenF1 返回 401，走兜底链）")
+        with _auth_lock:
+            if _auth is None:
+                _auth = OpenF1Auth()
+                if _auth.enabled:
+                    logger.info("[OpenF1Auth] OAuth2 认证已配置")
+                else:
+                    logger.info("[OpenF1Auth] 未配置 OPENF1_USERNAME/PASSWORD，匿名模式"
+                                "（现场环节窗口 OpenF1 返回 401，走兜底链）")
     return _auth
 
 

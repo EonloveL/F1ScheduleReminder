@@ -38,9 +38,28 @@ OUTLIER_RATIO = 1.07  # 与 stint_analysis 口径一致
 MIN_VALID_LAPS = 5    # 有效圈过少的车手不入图
 
 # 图表文件名版本：内容修复/口径变更时递增，破服务器磁盘缓存（永久复用逻辑）与
-# QQ 图片代理缓存——2026-10-09 实证：date_end bug 生成的空策略面板 PNG 被永久复用，
-# 修代码也不再生效，必须换文件名
+# QQ 图片代理缓存——实证：数据处理 bug 生成的错误 PNG 被永久复用，修代码也不再生效
 CHART_VER = "v2"
+
+
+def _race_completed_gate(f1_api, season: int, round_num: int, path: str) -> str:
+    """正赛未完赛（开始+5h 未到，覆盖拖堂/红旗延长）时把正式文件名改为 _fb{月日}
+    日期戳：赛中残缺数据（部分 stint/圈速/赛会消息）不得写永久文件名——
+    exists 复用会把半成品永久定格（生产 review 实证风险）。
+    排位类图表不适用此闸门（排位数据排位结束后即完整），调用方自行决定"""
+    try:
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        sched = (f1_api.get_schedule_for_year(season) or []) if f1_api else []
+        race = next((r for r in sched if int(r.get("round", 0)) == round_num), None)
+        if race and race.get("date"):
+            rt = (race.get("time") or "00:00:00Z").replace("Z", "")
+            start = _dt.fromisoformat(f"{race['date']}T{rt}").replace(tzinfo=_tz.utc)
+            if _dt.now(_tz.utc) < start + _td(hours=5):
+                stamp = _dt.now(_tz.utc).strftime("%m%d")
+                return os.path.splitext(path)[0] + f"_fb{stamp}.png"
+    except Exception:
+        pass
+    return path
 
 
 def _pick_cjk_font():
@@ -107,7 +126,9 @@ def _pace_laps_jolpica(analyzer, season: int, round_num: int, why: str
         return "UNKNOWN"
 
     for drv, lapmap in per_drv.items():
-        surname = drv.replace("_", " ").split()[-1].lower()
+        # 完整归一化姓氏（de_vries→"de vries" 而非 "vries"）：livetiming 配方键与
+        # 完赛名次匹配（_finish_pos 后缀匹配）都以全姓为准
+        surname = _norm_name(drv.replace("_", " "))
         pits = drv_pits.get(drv, set())
         vals = [(n, s) for n, s in sorted(lapmap.items())
                 if n not in pits and (n - 1) not in pits]
@@ -383,15 +404,20 @@ def _strategy_stints(analyzer, season: int, round_num: int,
                 if did and lap:
                     pits_by_drv[did].append(lap)
             out = {}
-            for did, pits in pits_by_drv.items():
+            # 以成绩名单为全集播种（零进站车手如红旗换胎不进 pitstops 表，不得漏画），
+            # 再按进站圈切段
+            for e in entries:
+                did = e.get("driver_id") or ""
                 surname = id_to_surname.get(did)
                 if not surname:
                     continue
-                bounds = [1] + sorted(set(pits)) + [total_laps]
-                # 进站圈 = 该 stint 结束圈
-                out[surname] = [{"lap_start": bounds[i], "lap_end": bounds[i + 1],
+                bounds = [1] + sorted(set(pits_by_drv.get(did, []))) + [total_laps]
+                # 进站圈 = 该 stint 结束圈（in-lap 归旧胎）；下一段从进站圈+1 起（边界圈不重叠画两遍）
+                out[surname] = [{"lap_start": (bounds[i] if i == 0 else bounds[i] + 1),
+                                 "lap_end": bounds[i + 1],
                                  "compound": "UNKNOWN", "stint": i + 1}
-                                for i in range(len(bounds) - 1)]
+                                for i in range(len(bounds) - 1)
+                                if (bounds[i] if i == 0 else bounds[i] + 1) <= bounds[i + 1]]
             if out:
                 logger.info(f"[chart] 策略时间线走 Jolpica pitstops 兜底（无配方）: "
                             f"{season} R{round_num}")
@@ -406,6 +432,7 @@ def render_strategy_chart(season: int, round_num: int, race_name: str = "",
     """轮胎策略时间线：横轴圈数、纵轴车手（按完赛名次），stint 色块按配方着色"""
     os.makedirs(EXPORTS_DIR, exist_ok=True)
     path = os.path.join(EXPORTS_DIR, f"strategy_chart_{CHART_VER}_{season}_R{round_num}.png")
+    path = _race_completed_gate(f1_api, season, round_num, path)  # 未完赛跑日期戳文件名
     if os.path.exists(path):
         return path
     from .stint_analysis import StintAnalyzer
@@ -418,7 +445,8 @@ def render_strategy_chart(season: int, round_num: int, race_name: str = "",
     _is_fb = all(s["compound"] == "UNKNOWN" for lst in data.values() for s in lst)
     if _is_fb:
         from datetime import datetime as _dt
-        path = path.replace(".png", f"_fb{_dt.now().strftime('%m%d')}.png")
+        if "_fb" not in os.path.basename(path):  # 完赛闸门可能已改日期戳，防 _fb_fb 叠加
+            path = os.path.splitext(path)[0] + f"_fb{_dt.now().strftime('%m%d')}.png"
         if os.path.exists(path):
             return path
 
@@ -472,7 +500,8 @@ def render_positions_chart(season: int, round_num: int, race_name: str = "",
                            f1_api=None) -> Optional[str]:
     """名次变化图：发车格→完赛 名次得/失条形图（绿升红降），按完赛名次排序"""
     os.makedirs(EXPORTS_DIR, exist_ok=True)
-    path = os.path.join(EXPORTS_DIR, f"positions_chart_{season}_R{round_num}.png")
+    path = os.path.join(EXPORTS_DIR, f"positions_chart_{CHART_VER}_{season}_R{round_num}.png")
+    path = _race_completed_gate(f1_api, season, round_num, path)  # 未完赛跑日期戳文件名
     if os.path.exists(path):
         return path
     entries = _race_entries(f1_api, season, round_num) if f1_api else []
@@ -525,6 +554,7 @@ def render_race_report_chart(season: int, round_num: int, race_name: str = "",
     """赛后三联图：pace 分布箱线 + 轮胎策略时间线 + 名次变化（一张图一次发送）"""
     os.makedirs(EXPORTS_DIR, exist_ok=True)
     path = os.path.join(EXPORTS_DIR, f"race_report_{CHART_VER}_{season}_R{round_num}.png")
+    path = _race_completed_gate(f1_api, season, round_num, path)  # 未完赛跑日期戳文件名
     if os.path.exists(path):
         return path
 
@@ -541,7 +571,8 @@ def render_race_report_chart(season: int, round_num: int, race_name: str = "",
                                    for lst in strat.values() for s in lst)
     if _fb_pace or _fb_strat:
         from datetime import datetime as _dt
-        path = path.replace(".png", f"_fb{_dt.now().strftime('%m%d')}.png")
+        if "_fb" not in os.path.basename(path):  # 完赛闸门可能已改日期戳，防 _fb_fb 叠加
+            path = os.path.splitext(path)[0] + f"_fb{_dt.now().strftime('%m%d')}.png"
         if os.path.exists(path):
             return path
 
@@ -657,7 +688,7 @@ def render_quali_gap_chart(season: int, round_num: int, race_name: str = "",
     冲刺排位文件名带 _sq 后缀避免同轮覆盖"""
     os.makedirs(EXPORTS_DIR, exist_ok=True)
     suffix = "_sq" if session_type == "sprint_qualifying" else ""
-    path = os.path.join(EXPORTS_DIR, f"quali_gap_{season}_R{round_num}{suffix}.png")
+    path = os.path.join(EXPORTS_DIR, f"quali_gap_{CHART_VER}_{season}_R{round_num}{suffix}.png")
     if os.path.exists(path):
         return path
     if not f1_api:
@@ -688,8 +719,9 @@ def render_quali_gap_chart(season: int, round_num: int, race_name: str = "",
     if len(best) < 5:
         return None
     pole = min(best.values())
+    # 按差距排序（非 position 提示）：杆位=差距 0 必须在首行，否则杆位金色标错人
     rows = sorted(((s, v - pole) for s, v in best.items()),
-                  key=lambda x: (order_hint.get(x[0], 99), x[1]))
+                  key=lambda x: x[1])
 
     _sess_label = "冲刺排位" if session_type == "sprint_qualifying" else "排位"
     fig, plt = _setup_dark_fig((14, 7),
@@ -741,16 +773,23 @@ def render_points_trend_chart(season: int, f1_api=None) -> Optional[str]:
         rnd = int(r.get("round", 0))
         rounds.append(rnd)
         awarded: Dict[str, float] = {}
+        race_ok = False
         for sess in ("race", "sprint"):
             try:
                 res = f1_api.get_session_results(rnd, sess, retries=1, season=season) or {}
             except Exception:
                 continue
+            if sess == "race" and res.get("entries"):
+                race_ok = True
             for e in res.get("entries") or []:
                 pts = e.get("points")
                 if pts:
                     name = (e.get("driver_name") or "").split()[-1]
                     awarded[name] = awarded.get(name, 0) + float(pts)
+        if not race_ok:
+            # 某站正赛拉取失败/空数据：图会缺一站积分且被缓存一周，宁可不画
+            logger.warning(f"[chart] 积分走势 R{rnd} 成绩拉取失败，放弃渲染（防残缺图被缓存）")
+            return None
         for n, p in awarded.items():
             if n not in cum:
                 # 季中加入车手：首秀之前的轮次前部补零（尾部补值会把曲线整体左移）
@@ -798,6 +837,7 @@ def render_pace_chart(season: int, round_num: int, race_name: str = "",
     """渲染 pace 分布图 → PNG 路径，失败 None。已生成直接复用（完赛数据不可变）"""
     os.makedirs(EXPORTS_DIR, exist_ok=True)
     path = os.path.join(EXPORTS_DIR, f"pace_chart_{CHART_VER}_{season}_R{round_num}.png")
+    path = _race_completed_gate(f1_api, season, round_num, path)  # 未完赛跑日期戳文件名
     if os.path.exists(path):
         return path
 
@@ -811,7 +851,8 @@ def render_pace_chart(season: int, round_num: int, race_name: str = "",
     _is_fb = all(c == "UNKNOWN" for laps in pace.values() for _, c in laps)
     if _is_fb:
         from datetime import datetime as _dt
-        path = path.replace(".png", f"_fb{_dt.now().strftime('%m%d')}.png")
+        if "_fb" not in os.path.basename(path):  # 完赛闸门可能已改日期戳，防 _fb_fb 叠加
+            path = os.path.splitext(path)[0] + f"_fb{_dt.now().strftime('%m%d')}.png"
         if os.path.exists(path):
             return path
 
@@ -1105,7 +1146,7 @@ def render_pu_usage_chart(season: int, f1cosmos=None) -> Optional[str]:
                 continue
             if lim is not None and v >= lim:
                 warns.append(k)
-        label = f" {e['total']}" + (f"  [超限: {','.join(warns)}]" if warns else "")
+        label = f" {e.get('total') or 0}" + (f"  [超限: {','.join(warns)}]" if warns else "")
         ax.text(left + 0.05, y, label, va="center", color="#dddddd", fontsize=9)
     ax.set_yticks(range(len(rows)))
     ax.set_yticklabels([(e.get("last_name") or "?") for e in rows], color="#eeeeee", fontsize=10)
@@ -1136,7 +1177,8 @@ def render_pitstop_chart(season: int, round_num: int, race_name: str = "",
     """进站时长箱线图（车队对比，Jolpica pitstops——真实停站时长，比 OpenF1 的
     进站车道时间更有分析价值；且 Jolpica 与赛程同源、服务器网络实证稳定）"""
     os.makedirs(EXPORTS_DIR, exist_ok=True)
-    path = os.path.join(EXPORTS_DIR, f"pitstop_chart_{season}_R{round_num}.png")
+    path = os.path.join(EXPORTS_DIR, f"pitstop_chart_{CHART_VER}_{season}_R{round_num}.png")
+    path = _race_completed_gate(f1_api, season, round_num, path)  # 未完赛跑日期戳文件名
     if os.path.exists(path):
         return path
     try:
@@ -1292,7 +1334,8 @@ def render_sc_timeline(season: int, round_num: int, race_name: str = "",
     """安全车事件时间线（SC 黄底/VSC 蓝底/红旗红底 + 部署圈标记）。
     无事件返回 None（调用方跳过发送）"""
     os.makedirs(EXPORTS_DIR, exist_ok=True)
-    path = os.path.join(EXPORTS_DIR, f"sc_timeline_{season}_R{round_num}.png")
+    path = os.path.join(EXPORTS_DIR, f"sc_timeline_{CHART_VER}_{season}_R{round_num}.png")
+    path = _race_completed_gate(f1_api, season, round_num, path)  # 未完赛跑日期戳文件名
     if os.path.exists(path):
         return path
     evts = get_sc_events(season, round_num, f1_api)
@@ -1358,6 +1401,7 @@ def render_weather_chart(season: int, round_num: int, race_name: str = "",
     （气温 + 沥青温度回归模型估算 + 降水概率%）。"""
     os.makedirs(EXPORTS_DIR, exist_ok=True)
     path = os.path.join(EXPORTS_DIR, f"weather_chart_{CHART_VER}_{season}_R{round_num}.png")
+    path = _race_completed_gate(f1_api, season, round_num, path)  # 未完赛跑日期戳文件名
     if os.path.exists(path):
         return path  # 实测版永久复用
     from .stint_analysis import StintAnalyzer
@@ -1369,6 +1413,17 @@ def render_weather_chart(season: int, round_num: int, race_name: str = "",
         if measured:
             return measured
         # 实测有数据但过滤后不可用（传感器整场掉线）：穿透到归档/预报
+    # livetiming 归档实测兜底（OpenF1 401/不可达时；行结构同 OpenF1 weather）
+    try:
+        from .livetiming_client import LiveTimingClient
+        lt_rows = LiveTimingClient(f1_api=analyzer.f1_api).get_weather(season, round_num)
+        if lt_rows and len(lt_rows) >= 10:
+            measured = _weather_chart_openf1(lt_rows, path, season, round_num, race_name)
+            if measured:
+                logger.info(f"[chart] 天气图走 livetiming 实测归档兜底: {season} R{round_num}")
+                return measured
+    except Exception as e:
+        logger.warning(f"[chart] livetiming 天气兜底失败: {e}")
     # 预报版独立文件名（带日期戳防陈旧），赛后实测版生成后走实测文件名，互不挡路
     from datetime import datetime as _dt
     fc_path = os.path.join(
@@ -1407,8 +1462,9 @@ def _weather_chart_forecast(season: int, round_num: int, race_name: str,
         t0 = times[0]
         xs = [((t - t0).total_seconds() / 3600) for t in times]
         air = h.get("temperature_2m") or []
-        precip = h.get("precipitation_probability") or [0] * len(xs)
-        wind = h.get("wind_speed_10m") or [0] * len(xs)
+        # Open-Meteo 可能回嵌套 null，fill_between 遇 None 直接抛 TypeError
+        precip = [p or 0 for p in (h.get("precipitation_probability") or [0] * len(xs))]
+        wind = [w or 0 for w in (h.get("wind_speed_10m") or [0] * len(xs))]
         soil = h.get("soil_temperature_0cm") or []
         rad = h.get("shortwave_radiation") or []
         from .weather_api import ASPHALT_MODEL
@@ -1507,11 +1563,12 @@ def _weather_chart_openf1(rows, path, season, round_num, race_name) -> Optional[
 
 
 # ==================== 渲染并发保护 ====================
-# pyplot 全局状态非线程安全：渲染可能由调度线程/指令线程/LLM 工具线程并发触发，
-# 模块级锁串行 + finally 清理 pyplot 注册表（任何异常路径都不泄漏 figure 防内存膨胀）
+# pyplot 全局状态非线程安全：渲染可能由调度线程/指令线程/LLM 工具线程并发触发。
+# RLock 串行（可重入防未来公开函数互调死锁）+ finally 只清理本函数新增的 figure
+# （close("all") 会误杀 telemetry_analysis/ratings_chart 等其他模块在画的图）
 import threading as _threading
 
-_RENDER_LOCK = _threading.Lock()
+_RENDER_LOCK = _threading.RLock()
 
 
 def _render_guard(fn):
@@ -1519,15 +1576,17 @@ def _render_guard(fn):
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
+        from matplotlib import pyplot as _plt
+        before = set(_plt.get_fignums())
         with _RENDER_LOCK:
             try:
                 return fn(*args, **kwargs)
             finally:
-                try:
-                    from matplotlib import pyplot as _plt
-                    _plt.close("all")
-                except Exception:
-                    pass
+                for fignum in set(_plt.get_fignums()) - before:
+                    try:
+                        _plt.close(fignum)
+                    except Exception:
+                        pass
 
     return wrapper
 

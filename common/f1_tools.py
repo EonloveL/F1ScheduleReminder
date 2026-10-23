@@ -776,16 +776,23 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
             race = past[-1] if past else None
         if not race:
             return {"error": f"未找到分站（{q or '最近已完赛'}）"}
-        # 未赛判定按正赛开始时间戳（正赛日当天完赛后可正常查询）
-        from datetime import timezone as _tzu2
+        # 未赛判定按环节开始时间戳：排位类图表看排位时间（排位结束即可查，
+        # 周六晚问排位差距图不该被"分站未赛"挡住），正赛类看正赛时间
+        from datetime import timezone as _tzu2, timedelta as _td2
         race_dt = None
         try:
-            rt = race.get("time", "00:00:00Z").replace("Z", "")
-            race_dt = _dt.fromisoformat(f"{race['date']}T{rt}").replace(tzinfo=_tzu2.utc)
+            if chart in ("quali_gap", "sprint_quali_gap"):
+                sess_key = "SprintQualifying" if chart == "sprint_quali_gap" else "Qualifying"
+                sess_info = race.get(sess_key) or {}
+                rt = (sess_info.get("time") or "00:00:00Z").replace("Z", "")
+                race_dt = _dt.fromisoformat(f"{sess_info.get('date', race['date'])}T{rt}").replace(tzinfo=_tzu2.utc)
+            else:
+                rt = race.get("time", "00:00:00Z").replace("Z", "")
+                race_dt = _dt.fromisoformat(f"{race['date']}T{rt}").replace(tzinfo=_tzu2.utc)
         except Exception:
             pass
-        if race_dt and _dt.now(_tzu2.utc) < race_dt:
-            return {"race": race.get("raceName"), "error": "分站未赛，暂无统计数据"}
+        if race_dt and _dt.now(_tzu2.utc) < race_dt + _td2(hours=2):
+            return {"race": race.get("raceName"), "error": "环节未进行，暂无统计数据"}
         round_num = int(race["round"])
         race_name = race.get("raceName", "")
 

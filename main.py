@@ -1563,8 +1563,9 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         await reply_text(message,
                                          f"{race.get('raceName')} 暂无进站数据（分站未赛或无有效停站）")
                     else:
+                        import os as _os
                         await reply_image(message,
-                                          f"{RATING_BASE_URL}/exports/pitstop_chart_{SEASON}_R{race['round']}.png",
+                                          f"{RATING_BASE_URL}/exports/{_os.path.basename(chart_path)}",
                                           content=f"🔧 {race.get('raceName')} 进站时长车队对比")
 
                 elif cmd == "/sc":
