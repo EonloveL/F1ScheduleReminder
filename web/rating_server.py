@@ -19,6 +19,7 @@ import logging
 import os
 import sys
 import time
+from datetime import datetime, timedelta
 from typing import Any, Dict
 
 from flask import Flask, abort, jsonify, render_template_string, request, send_from_directory
@@ -559,6 +560,55 @@ def board(key):
         race_name=race["race_name"], board=agg, names=names, dotd=race.get("dotd"),
         closed=closed, status_text=status
     )
+
+
+@app.route("/f1_calendar.ics")
+def f1_calendar_ics():
+    """ICS 赛程订阅：手机日历 App 订阅该 URL 后全年赛程自动同步（本地时区换算）。
+    每环节一个 VEVENT（正赛/排位/冲刺/练习），UTC 时间由客户端换算本地显示"""
+    from datetime import datetime as _dt
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0",
+             "PRODID:-//F1ScheduleReminder//Race Calendar//CN",
+             "CALSCALE:GREGORIAN", f"X-WR-CALNAME:F1 {f1_api.season} 赛程",
+             "X-WR-TIMEZONE:Asia/Shanghai", "REFRESH-INTERVAL;VALUE=DURATION:PT12H"]
+    SESSION_CN = {"fp1": "FP1", "fp2": "FP2", "fp3": "FP3", "sprint_qualifying": "冲刺排位",
+                  "sprint": "冲刺赛", "qualifying": "排位赛", "race": "正赛"}
+    DUR = {"fp1": 90, "fp2": 90, "fp3": 60, "sprint_qualifying": 45, "sprint": 60,
+           "qualifying": 60, "race": 150}
+    try:
+        schedule = f1_api.get_schedule()
+        if not schedule:
+            # 双源全挂返回空日历时订阅端会清空已同步赛事——宁可 503 让客户端保留旧数据
+            logger.error("ICS 生成失败: 赛程为空（双源全挂）")
+            abort(503)
+        def _esc(t: str) -> str:
+            # RFC5545 文本转义（逗号/分号/换行）
+            return str(t).replace("\\", "\\\\").replace(",", "\\,").replace(";", "\\;").replace("\n", "\\n")
+        for race in schedule:
+            for s in f1_api.get_all_sessions(race):
+                dt = s.get("datetime")
+                if not dt:
+                    continue
+                cn_name = SESSION_CN.get(s["type"], s["type"])
+                start = dt.strftime("%Y%m%dT%H%M%SZ")
+                end = (dt + timedelta(minutes=DUR.get(s["type"], 90))).strftime("%Y%m%dT%H%M%SZ")
+                bj = dt + timedelta(hours=8)
+                summary = f"F1 R{s['round']} {race.get('raceName','')} {cn_name}"
+                desc = f"北京时间 {bj.strftime('%m月%d日 %H:%M')} · {s.get('circuit','')}"
+                lines += ["BEGIN:VEVENT",
+                          f"UID:{s['round']}-{s['type']}@f1-schedule-reminder",
+                          f"DTSTAMP:{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}",
+                          f"DTSTART:{start}", f"DTEND:{end}",
+                          f"SUMMARY:{_esc(summary)}", f"LOCATION:{_esc(s.get('circuit',''))}",
+                          f"DESCRIPTION:{_esc(desc)}", "END:VEVENT"]
+    except Exception as e:
+        logger.error(f"ICS 生成失败: {e}")
+        abort(500)
+    lines.append("END:VCALENDAR")
+    body = "\r\n".join(lines) + "\r\n"
+    return body, 200, {"Content-Type": "text/calendar; charset=utf-8",
+                       "Content-Disposition": "inline; filename=f1_calendar.ics",
+                       "Cache-Control": "max-age=21600"}
 
 
 @app.route("/exports/<path:filename>")

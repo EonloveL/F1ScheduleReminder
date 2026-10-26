@@ -27,6 +27,18 @@ from .drivers_profile import get_known_driver_names
 
 logger = logging.getLogger(__name__)
 
+
+def _alert_empty_parse(doc_label: str, event: str, season: int, url: str):
+    """文档存在且已下载但解析出 0 行——疑似 PDF 版式变更（解析器静默失效的最大风险点）。
+    告警管理员（12h 去重），不阻断调用方回退逻辑"""
+    try:
+        from .admin_alert import alert_admin
+        alert_admin(f"FIA {doc_label} PDF 解析为空",
+                    f"{season} {event}\n文档存在且已下载，但解析出 0 行——疑似 PDF 版式变更，解析器需适配\n{url}",
+                    key=f"fia_empty_{doc_label}_{season}_{event}")
+    except Exception:
+        pass
+
 BASE = "https://www.fia.com"
 SEASON_PAGE = BASE + "/documents/championships/fia-formula-one-world-championship-14"
 # 年份 -> 赛季页ID（页面选择框实证）；未知年份时自动从选择框解析
@@ -667,20 +679,31 @@ class FIADocsAPI(F1CosmosAPI):
         if m:
             out["format"] = m.group(1)  # Standard/Alternative（冲刺周末）
 
-        # 能量回收上限：找 "MJ" 数值行（5列固定语义顺序）
-        mj = re.findall(r"([\d.]+)\s*MJ", text)
-        if len(mj) >= 5:
+        # 能量回收上限：锚定 "Maximum Recharge" 标签行，数值行在其后第 4-5 行
+        # （表头多行跨排，实证新加坡 R17：标签行→列名3行→数值行），取 li:li+6 窗口；
+        # 数量 ≠5 时记警告并拒绝赋值（宁缺勿错，逐站数值禁止错位跨套）
+        mj: List[str] = []
+        lines = text.splitlines()
+        for li, line in enumerate(lines):
+            if "Maximum Recharge" in line:
+                window = " ".join(lines[li:li + 6])
+                mj = re.findall(r"([\d.]+)\s*MJ", window)
+                break
+        if len(mj) == 5:
             out["recharge_limits_mj"] = {
                 "race_normal": float(mj[0]), "race_overtake": float(mj[1]),
                 "qualifying": float(mj[2]), "free_practice": float(mj[3]),
                 "out_lap": float(mj[4]),
             }
+        elif mj:
+            logger.warning(f"PU信息回收上限列数异常（{len(mj)}≠5），拒绝赋值: {gp_name}")
         # 功率削减率 + Power Limited 距离（"2185 m 100 kW/s"）
         m = re.search(r"(\d+)\s*m\s+(\d+)\s*kW/s", text)
         if m:
             out["power_limited_distance_m"] = int(m.group(1))
             out["max_power_reduction_rate_kws"] = int(m.group(2))
-        # Overtake 检测/激活线（OVERTAKE 区内两个 "xxxx m" + 差距秒数）
+        # Overtake 检测/激活线（OVERTAKE 区内两个 "xxxx m" + 差距秒数）；
+        # 注意激活线数值>检测线（检测在弯道出弯处、激活在其后直道入口），不要加大小校验
         ot = text.split("OVERTAKE", 1)[-1]
         dists = re.findall(r"(\d{3,4})\s*m\b", ot)
         if len(dists) >= 2:
@@ -689,6 +712,13 @@ class FIADocsAPI(F1CosmosAPI):
         m = re.search(r"([\d.]+)\s*s\b", ot)
         if m:
             out["overtake_gap_s"] = float(m.group(1))
+        # 实质字段校验：一个都没抽到视为解析失败（防空壳被当有结果缓存，历史站永久缓存无自愈）
+        substantive = [k for k in ("centreline_km", "recharge_limits_mj",
+                                   "power_limited_distance_m", "overtake_detection_m")
+                       if k in out]
+        if not substantive:
+            logger.warning(f"PU信息解析无实质字段（版式变更？）: {gp_name}")
+            return {}
         out["note"] = ("数值为本站 FIA Power Unit Information 官方文档口径，逐站不同；"
                        "MGU-K 350kW 为绝对功率上限（任何模式不可突破）")
         return out
@@ -887,6 +917,7 @@ class FIADocsAPI(F1CosmosAPI):
                             logger.info(f"✓ 升级件数据来自FIA官方文档（{event}，{len(rows)}项，"
                                         f"{len(self.no_update_teams)}支车队未提交）")
                             return rows
+                        _alert_empty_parse("升级件", event, season, url)
             logger.info("FIA升级件文档不可用，回退F1Cosmos")
         except Exception as e:
             logger.warning(f"FIA升级件解析失败，回退F1Cosmos: {e}")
@@ -902,8 +933,64 @@ class FIADocsAPI(F1CosmosAPI):
             return cosmos
         return self.get_season_events_upgrades(season)
 
+    def _current_event_pu_new(self, season: int) -> List[Dict[str, Any]]:
+        """当前分站 New PU elements 文档（多版本合并，同名同部件取 prev 大者=新者）。
+        从 detect_pu_changes 抽出的共享部分，供检测与用量叠加复用"""
+        event = self._current_event_name()
+        if not event:
+            return []
+        docs = self.get_event_documents(event, season)
+        urls = self.find_doc_urls(docs, "pu_new")
+        if not urls:
+            return []
+        merged: Dict[tuple, Dict[str, Any]] = {}
+        for url in urls:
+            pdf = self._download_pdf(url)
+            if not pdf:
+                continue
+            for it in self.parse_pu_new_pdf(pdf):
+                key = (it["last_name"] or it["driver"], it["element"])
+                if key not in merged or it["prev"] >= merged[key]["prev"]:
+                    merged[key] = it
+        return list(merged.values())
+
+    def _overlay_pending_pu(self, rows: List[Dict[str, Any]], season: int) -> List[Dict[str, Any]]:
+        """把当前分站 pu_new 申报叠加到 pu_used 累计用量上（2026-10-09 用户实证：
+        赛前播报读 pu_new 已含新件，/pu 读 pu_used 还是开赛前的口径——
+        因为 FIA 的"up to now"文档周末阶段口径仍是上一站结束）。
+        叠加规则：pu_new 的 now 值 > 累计值时才覆盖（累计文档已更新则不重复计）。"""
+        try:
+            pending = self._current_event_pu_new(season)
+        except Exception as e:
+            logger.warning(f"PU 新申报叠加失败（不影响基础数据）: {e}")
+            return rows
+        if not pending:
+            return rows
+        by_name = {r.get("last_name"): r for r in rows}
+        overlaid = 0
+        for it in pending:
+            row = by_name.get(it.get("last_name") or "")
+            if not row:
+                continue
+            el = it["element"]
+            try:
+                cur = int(row["usages"].get(el) or 0)
+            except (TypeError, ValueError):
+                cur = 0
+            if it["now"] > cur:
+                row["usages"][el] = it["now"]
+                # usages 内含 TOTAL_COUNT 合计键（parse_pu_used_pdf 口径），同步更新
+                row["usages"]["TOTAL_COUNT"] = (row["usages"].get("TOTAL_COUNT") or 0) + (it["now"] - cur)
+                row["total"] = (row.get("total") or 0) + (it["now"] - cur)
+                row.setdefault("new_this_event", []).append(el)
+                overlaid += 1
+        if overlaid:
+            logger.info(f"✓ PU 用量已叠加本站新申报 {overlaid} 项（pu_new 文档口径）")
+        return rows
+
     def get_elements(self, season: int = None) -> List[Dict[str, Any]]:
-        """PU用量：FIA最新官方表；历史赛季取该赛季末站的FIA累计用量文档；失败回退Cosmos"""
+        """PU用量：FIA最新官方表；历史赛季取该赛季末站的FIA累计用量文档；失败回退Cosmos
+        当前赛季会叠加本站新申报（pu_new 文档），防赛前查询返回开赛前口径"""
         season = season or self.season
         if season != self.season:
             return self._get_elements_historical(season)
@@ -917,11 +1004,13 @@ class FIADocsAPI(F1CosmosAPI):
                     if pdf:
                         rows = self.parse_pu_used_pdf(pdf, gp_name=event)
                         if rows:
+                            rows = self._overlay_pending_pu(rows, season)
                             logger.info(f"✓ PU用量数据来自FIA官方文档（{event}，{len(rows)}位车手）")
                             return rows
+                        _alert_empty_parse("PU用量", event, season, url)
             logger.info("FIA PU用量文档不可用，回退F1Cosmos")
         except Exception as e:
-            logger.warning(f"FIA PU用量解析失败，回退F1Cosmos: {e}")
+            logger.warning(f"FIA PU用量获取失败，回退F1Cosmos: {e}")
         return super().get_elements(season)
 
     def _last_event_of_season(self, season: int) -> Optional[str]:

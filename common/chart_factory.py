@@ -271,6 +271,13 @@ def _finish_pos(finish_full: List[str], surname: str) -> int:
     return 99
 
 
+def _boxplot_compat(ax, data, horizontal: bool = False, **kw):
+    """matplotlib 3.10+ 弃用 vert 改用 orientation；旧版无 orientation——双兼容"""
+    try:
+        return ax.boxplot(data, orientation=("horizontal" if horizontal else "vertical"), **kw)
+    except TypeError:
+        return ax.boxplot(data, vert=(not horizontal), **kw)
+
 def _style_ax(ax):
     ax.set_facecolor("#1a1d26")
     ax.tick_params(colors="#aaaaaa")
@@ -591,7 +598,7 @@ def render_race_report_chart(season: int, round_num: int, race_name: str = "",
     names = [s for s, _, _ in stats]
     data = [sd for _, sd, _ in stats]
     laps_by = {s: lp for s, _, lp in stats}
-    ax1.boxplot(data, vert=True, positions=range(len(names)), widths=0.55,
+    _boxplot_compat(ax1, data, positions=range(len(names)), widths=0.55,
                 patch_artist=True, showfliers=False,
                 medianprops=dict(color="#ff8c00", linewidth=2),
                 whiskerprops=dict(color="#cccccc", linewidth=1),
@@ -877,7 +884,7 @@ def render_pace_chart(season: int, round_num: int, race_name: str = "",
     ax.set_facecolor("#1a1d26")
 
     # 箱线图
-    bp = ax.boxplot(data, vert=True, positions=range(len(names)),
+    bp = _boxplot_compat(ax, data, positions=range(len(names)),
                     widths=0.55, patch_artist=True, showfliers=False,
                     medianprops=dict(color="#ff8c00", linewidth=2),
                     whiskerprops=dict(color="#cccccc", linewidth=1),
@@ -1231,7 +1238,7 @@ def render_pitstop_chart(season: int, round_num: int, race_name: str = "",
     fig, plt = _setup_dark_fig((13, max(6, len(stats) * 0.7 + 2)))
     ax = fig.add_axes([0.16, 0.09, 0.78, 0.80])
     ax.set_facecolor("#1a1d26")
-    ax.boxplot([v for _, v in stats], vert=False, positions=range(len(stats)),
+    _boxplot_compat(ax, [v for _, v in stats], horizontal=True, positions=range(len(stats)),
                widths=0.55, patch_artist=True, showfliers=True,
                medianprops=dict(color="#ff8c00", linewidth=2),
                whiskerprops=dict(color="#cccccc"), capprops=dict(color="#cccccc"),

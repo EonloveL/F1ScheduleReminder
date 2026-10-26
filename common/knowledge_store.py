@@ -137,14 +137,19 @@ class KnowledgeStore:
 
     def add_candidate(self, claim: str, source: str, qid: str = "",
                       user_id: str = "") -> Optional[int]:
-        """加入候选区，返回候选 id。source: correction(用户纠错) / distill(每周蒸馏)"""
+        """加入候选区，返回候选 id。source: correction(用户纠错) / distill(每周蒸馏) /
+        video(视频导读) / data_update(接口新数据)。KB_ENABLED=false 时全局停用不入队"""
+        import os as _os
+        if _os.getenv("KB_ENABLED", "true").strip().lower() != "true":
+            return None
         claim = (claim or "").strip()
         if not claim:
             return None
         with self._lock:
-            # 去重：待审/已入库里已有高度相似的不再加
+            # 去重：待校对/待审/已入库里已有相同的不再加
             for c in self._candidates:
-                if c.get("status") in ("pending", "approved") and c.get("claim") == claim:
+                if c.get("status") in ("pending_factcheck", "pending", "approved") \
+                        and c.get("claim") == claim:
                     return None
             cid = (max((c.get("id", 0) for c in self._candidates), default=0)
                    + 1)
@@ -173,6 +178,11 @@ class KnowledgeStore:
         """待人工审核（事实校对已通过）"""
         with self._lock:
             return [c for c in self._candidates if c.get("status") == "pending"]
+
+    def pending_factcheck_candidates(self) -> List[Dict[str, Any]]:
+        """待事实校对（含 scheduler 等无实时钩子来源的候选，由每周蒸馏兜底校对）"""
+        with self._lock:
+            return [dict(c) for c in self._candidates if c.get("status") == "pending_factcheck"]
 
     def review(self, cid: int, approve: bool, reviewer: str = "") -> Optional[Dict[str, Any]]:
         """人工审核（第二层闸门）。批准 → 移入正式知识库"""

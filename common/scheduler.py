@@ -17,6 +17,37 @@ from .user_prefs import UserPrefsStore
 logger = logging.getLogger(__name__)
 
 
+def _kb_button(i, label, data):
+    """内联键盘按钮（与 main.py 指令面板同款 action 结构，点击即发送指令）"""
+    return {
+        "id": str(i),
+        "render_data": {"label": label, "visited_label": label, "style": 1},
+        "action": {"type": 2, "permission": {"type": 2}, "data": data,
+                   "enter": True, "at_bot_show_channel_list": True,
+                   "unsupport_tips": "客户端版本过低，请升级QQ"},
+    }
+
+
+def _post_race_keyboard():
+    """赛后结果卡关联按钮：一键出图/查榜"""
+    return {"rows": [
+        {"buttons": [_kb_button(1, "📊赛后三联图", "/racechart"),
+                     _kb_button(2, "📈Pace分布", "/pace"),
+                     _kb_button(3, "🛠进站对比", "/pitstops")]},
+        {"buttons": [_kb_button(4, "🏆积分榜", "/drivers"),
+                     _kb_button(5, "📈积分走势", "/trend")]},
+    ]}
+
+
+def _standings_keyboard():
+    """积分榜卡关联按钮"""
+    return {"rows": [
+        {"buttons": [_kb_button(1, "📈积分走势", "/trend"),
+                     _kb_button(2, "🏎️车队积分榜", "/teams"),
+                     _kb_button(3, "🏆车手积分榜", "/drivers")]},
+    ]}
+
+
 class ReminderScheduler:
     """F1提醒任务调度器"""
     
@@ -52,7 +83,86 @@ class ReminderScheduler:
         
         # 注册年度数据清理任务
         self.add_yearly_cleanup_job()
-        
+
+        # 注册每日自检任务
+        self.add_daily_selfcheck_job()
+
+    def add_daily_selfcheck_job(self):
+        """每日 9:30 管理员自检：数据源连通性 + LLM 可用性 + 指标计数，异常才 DM 打扰"""
+        self.scheduler.add_job(
+            func=self._daily_selfcheck,
+            trigger=CronTrigger(hour=9, minute=30, timezone=self.local_tz),
+            id='daily_selfcheck', replace_existing=True)
+        logger.info("已添加每日自检任务（9:30）")
+
+    def _daily_selfcheck(self):
+        """自检：全绿只记日志，有异常 DM 管理员（20h 去重）"""
+        from .admin_alert import alert_admin
+        import requests as _req
+        problems = []
+        season = self.config.get('SEASON') or datetime.now().year
+        from .f1_api import F1APIDevProvider, JolpicaProvider
+        for name, url in (("f1api.dev", f"{F1APIDevProvider.BASE_URL}/{season}"),
+                          ("Jolpica", f"{JolpicaProvider.BASE_URL}/{season}.json?limit=1"),
+                          ("OpenF1", f"https://api.openf1.org/v1/sessions?year={season - 1}&session_name=Race"),
+                          ("F1Cosmos", "https://api.f1cosmos.com/news"),
+                          ("FIA", "https://www.fia.com/")):
+            try:
+                r = _req.get(url, timeout=10,
+                             headers={"User-Agent": "F1-Reminder-Bot/1.0"},
+                             proxies={"http": None, "https": None})
+                if r.status_code >= 500:
+                    problems.append(f"{name} HTTP {r.status_code}")
+            except Exception as e:
+                problems.append(f"{name} 不可达: {type(e).__name__}")
+        llm = self.config.get('llm')
+        if llm and llm.enabled:
+            try:
+                ping = llm.chat_simple("只回答 ok 两个字母", "ping", timeout=15)
+                if not ping:
+                    problems.append(f"LLM 无响应（{llm.last_error or '未知'}）")
+            except Exception as e:
+                problems.append(f"LLM 异常: {type(e).__name__}: {e}")
+        else:
+            problems.append("LLM 未启用")
+        try:
+            from .metrics import snapshot
+            counters, uptime = snapshot()
+        except Exception:
+            counters, uptime = {}, 0
+        stat_line = (f"uptime {uptime // 3600}h · 指令 {counters.get('command_total', 0)}"
+                     f"（失败 {counters.get('command_error', 0)}）· "
+                     f"API全挂 {counters.get('api_all_failed', 0)} · "
+                     f"LLM 成{counters.get('llm_answer_ok', 0)}/败{counters.get('llm_answer_fail', 0)}"
+                     f"/超时{counters.get('llm_answer_timeout', 0)}")
+        # 错误计数增量判定：metrics 终身累计不清零，与上次自检快照取差值，防告警疲劳
+        new_errors = 0
+        try:
+            import json as _json
+            import os as _os
+            sp = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                               "data", "selfcheck_state.json")
+            prev = {}
+            if _os.path.exists(sp):
+                prev = _json.load(open(sp, encoding="utf-8"))
+            keys = ("command_error", "api_all_failed", "llm_answer_fail", "llm_answer_timeout")
+            new_errors = sum(max(0, counters.get(k, 0) - (prev.get(k) or 0)) for k in keys)
+            tmp = sp + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                _json.dump({k: counters.get(k, 0) for k in keys}, f)
+            _os.replace(tmp, sp)
+        except Exception:
+            pass
+        if problems:
+            alert_admin("每日自检发现异常",
+                        "\n".join(f"- {p}" for p in problems) + "\n\n" + stat_line,
+                        key="daily_selfcheck", cooldown_hours=20)
+        elif new_errors:
+            alert_admin("每日自检（昨日以来有新错误计数）",
+                        f"新增错误 {new_errors} 项\n{stat_line}",
+                        key="daily_selfcheck", cooldown_hours=20)
+        else:
+            logger.info(f"每日自检全部正常: {stat_line}")
     def add_yearly_cleanup_job(self):
         """
         每年12月31日 23:50 清理年度统计数据：
@@ -306,13 +416,21 @@ class ReminderScheduler:
             self._schedule_poll(session, attempt + 1, kind="session_result")
 
     def _notify_result_unavailable(self, session: Dict[str, Any]):
-        """24小时轮询仍无成绩时群里告知，避免无声"""
+        """24小时轮询仍无成绩时群里告知，避免无声；同时告警管理员（自愈入口）"""
         try:
             if hasattr(self.notify_bot, 'send_group_message'):
                 text = f"⏳ {session['race_name']} {session['name']} 成绩超过24小时仍未公布，数据更新后可发送 /last 查询"
                 self.notify_bot.send_group_message(text)
         except Exception as e:
             logger.warning(f"发送成绩未公布提示失败: {e}")
+        try:
+            from .admin_alert import alert_admin
+            alert_admin("成绩推送超时放弃",
+                        f"{session['race_name']} {session['name']} 轮询24h仍无数据，已放弃推送",
+                        key=f"result_timeout_{session.get('round')}_{session.get('type')}",
+                        cooldown_hours=24)
+        except Exception:
+            pass
 
     def _do_post_race_push(self, session: Dict[str, Any], results: Dict[str, Any]) -> bool:
         """正赛赛后推送主流程：成绩/圈速纪录/评分开启/积分榜/个性化DM"""
@@ -349,6 +467,14 @@ class ReminderScheduler:
                         if is_new_record:
                             lap_record_info = record_msg
                             logger.info(f"🎉 新圈速纪录: {record_msg}")
+                            # 接口新数据沉淀为知识候选（权威源数据仍需人工过一道闸门）
+                            try:
+                                from .knowledge_store import KnowledgeStore
+                                KnowledgeStore.get().add_candidate(
+                                    f"圈速纪录更新（数据源核查确认）：{record_msg}",
+                                    "data_update")
+                            except Exception as _ke:
+                                logger.debug(f"圈速纪录知识候选入队失败: {_ke}")
                         else:
                             logger.info(f"📊 圈速对比: {record_msg}")
             except Exception as e:
@@ -356,7 +482,9 @@ class ReminderScheduler:
 
         try:
             try:
-                ok = self.notify_bot.send_race_result(race_data, results, lap_record_info=lap_record_info)
+                ok = self.notify_bot.send_race_result(race_data, results,
+                                                      lap_record_info=lap_record_info,
+                                                      keyboard=_post_race_keyboard())
             except TypeError:
                 ok = self.notify_bot.send_race_result(race_data, results)
         except Exception as e:
@@ -432,14 +560,33 @@ class ReminderScheduler:
         # 比赛周末结束：事故成本缓存即刻失效，下次 /car 重抓含本站的最新数据
         # （24h TTL 之外的主动失效钩子，防周一查询还隔着一天的旧缓存）
         f1cosmos = self.config.get('f1cosmos')
+        season = self.config.get('SEASON') or session['datetime'].year
+        self._clear_destructors_cache(season)
+        # F1Cosmos 事故数据自身更新有延迟：若此刻抓回的仍是不含本站的旧数据（非空，
+        # 会缓存 24h），8h 后补清一次覆盖其隔夜更新，最长空窗 24h→8h
+        try:
+            run_time = datetime.now(self.local_tz) + timedelta(hours=8)
+            self.scheduler.add_job(
+                func=self._clear_destructors_cache,
+                trigger=DateTrigger(run_date=run_time),
+                args=[season],
+                id=self._make_job_id(session['type'], session['round'], "destructors_clear_8h"),
+                replace_existing=True
+            )
+            logger.info("已调度事故成本缓存 8h 补清")
+        except Exception as e:
+            logger.warning(f"调度事故成本补清失败: {e}")
+        return True
+
+    def _clear_destructors_cache(self, season: int):
+        """失效事故成本缓存（/car 数据源 F1Cosmos，键 v2 与读取端一致）"""
+        f1cosmos = self.config.get('f1cosmos')
         if f1cosmos and getattr(f1cosmos, 'cache', None):
             try:
-                season = self.config.get('SEASON') or session['datetime'].year
                 f1cosmos.cache.clear(f"f1cosmos_destructors_v2_{season}")
                 logger.info("已失效事故成本缓存（赛后钩子）")
             except Exception as e:
                 logger.warning(f"失效事故成本缓存失败: {e}")
-        return True
 
     # ==================== 积分榜新鲜度状态 ====================
     # 积分总和赛季内单调不减：记录上次成功推送的总和，赛后要求 新总和 ≥ 旧总和+本场颁发分，
@@ -513,11 +660,22 @@ class ReminderScheduler:
             logger.info(f"已调度积分榜补推: {job_id} - {delay}分钟后")
         else:
             logger.warning(f"积分榜轮询超时放弃: {session['race_name']}")
+            try:
+                from .admin_alert import alert_admin
+                alert_admin("积分榜推送超时放弃",
+                            f"{session['race_name']} 积分榜轮询 ~22h 仍未达新鲜度门槛，已放弃",
+                            key=f"standings_timeout_{session.get('round')}", cooldown_hours=24)
+            except Exception:
+                pass
 
     def _push_standings_and_dm(self, standings: Dict[str, Any], race_data: Dict[str, Any]):
         """群积分榜推送 + 个性化私聊播报"""
         race_name = race_data.get('raceName') if race_data else None
-        self.notify_bot.send_standings_update(standings, race_name)
+        try:
+            self.notify_bot.send_standings_update(standings, race_name,
+                                                  keyboard=_standings_keyboard())
+        except TypeError:
+            self.notify_bot.send_standings_update(standings, race_name)
 
         prefs_store = self.config.get('prefs_store')
         if not prefs_store:

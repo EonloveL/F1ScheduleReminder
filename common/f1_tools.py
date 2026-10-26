@@ -1163,10 +1163,17 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
                         leader = False
                 if not leader:
                     ev.wait(timeout=240)
-                    if cache:
-                        cached = cache.load(cache_key)
-                        if cached:
-                            return {**base, "is_f1": True, **cached}
+                    # leader 的 ev.set 先于 cache.save（时态窗口）：宽限轮询最多 6s；
+                    # follower 不写负缓存（防覆盖 leader 即将落盘的正结果）
+                    import time as _t
+                    for _ in range(3):
+                        if cache:
+                            cached = cache.load(cache_key)
+                            if cached:
+                                return {**base, "is_f1": True, **cached}
+                        _t.sleep(2)
+                    return {**base, "is_f1": True, "no_text": True,
+                            "note": "并发转写等待超时，直接回复用户稍后重试，禁止编造内容"}
                 else:
                     try:
                         audio_urls = client.get_audio_url_candidates(bvid, info["cid"])

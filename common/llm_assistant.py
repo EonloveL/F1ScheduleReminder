@@ -94,13 +94,36 @@ PROVIDERS = {
         "default_model": "kimi-k2.6",
         "web_search": True,
     },
+    # OpenAI 兼容通用端点（任意自托管/第三方兼容服务，需三个 env 齐全才启用）
+    "openai_compat": {
+        "base_url_env": "OPENAI_COMPAT_BASE_URL",
+        "key_env": "OPENAI_COMPAT_KEY",
+        "model_env": "OPENAI_COMPAT_MODEL",
+        "default_model": "",
+        "web_search": False,
+    },
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1/chat/completions",
+        "key_env": "OPENROUTER_API_KEY",
+        "model_env": "OPENROUTER_MODEL",
+        "default_model": "openai/gpt-4o-mini",
+        "web_search": False,
+    },
+    "gemini": {
+        # Google 官方 OpenAI 兼容端点
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "key_env": "GEMINI_API_KEY",
+        "model_env": "GEMINI_MODEL",
+        "default_model": "gemini-2.5-flash",
+        "web_search": False,
+    },
 }
 
 # 问答默认顺序：Kimi联网优先（F1知识需核实），DeepSeek兜底（可用 LLM_PROVIDER 环境变量覆盖）
-DEFAULT_ASK_ORDER = ["kimi", "deepseek"]
+DEFAULT_ASK_ORDER = ["kimi", "deepseek", "openai_compat", "openrouter", "gemini"]
 
 # 翻译默认顺序：DeepSeek快速便宜优先（翻译无需联网搜索），Kimi兜底
-TRANSLATE_ORDER = ["deepseek", "kimi"]
+TRANSLATE_ORDER = ["deepseek", "kimi", "openai_compat", "openrouter", "gemini"]
 
 
 class LLMAssistant:
@@ -149,24 +172,31 @@ class LLMAssistant:
         # 不接受显式 temperature 的模型集合（kimi-k2.x/k3 强制 temperature=1，传值即 400）；
         # 首次 400 重试时记入，之后直接免传，省掉每次请求的浪费往返（2026-09-15 事故中浪费约40s）
         self._no_temp_models: set = set()
+        # 不支持 response_format json_object 的模型集合（L1 JSON mode 兼容重试记忆）
+        self._no_json_mode_models: set = set()
         # get_race_prediction 的 sc_warning（高安全车赛道警示）暂存 {qid: 警示句}：
         # _execute_tool 命中时登记，_finalize_answer 确定性追加（实证 2026-09-23：
         # prediction.txt 规则 3b 要求"原样引用 sc_warning"被 L2/兜底模型三次忽略，
         # LLM 遵守提示词不可靠，改代码兜底保证高 SC 声明必达）
         self._sc_notices: Dict[str, str] = {}
 
-        # 检测可用供应商
+        # 检测可用供应商（openai_compat 需 base_url+key+model 三 env 齐全）
         self.available: Dict[str, Dict[str, Any]] = {}
         for name, cfg in PROVIDERS.items():
             api_key = os.getenv(cfg["key_env"], "")
-            if api_key:
+            base_url = cfg.get("base_url") or os.getenv(cfg.get("base_url_env", ""), "")
+            if api_key and base_url:
+                model = os.getenv(cfg["model_env"], "") or cfg["default_model"]
+                if not model:
+                    logger.warning(f"LLM供应商 {name} 缺模型配置（{cfg['model_env']}），跳过")
+                    continue
                 self.available[name] = {
                     "api_key": api_key,
-                    "base_url": cfg["base_url"],
-                    "model": os.getenv(cfg["model_env"], "") or cfg["default_model"],
+                    "base_url": base_url,
+                    "model": model,
                     "web_search": cfg["web_search"],
                 }
-                logger.info(f"✓ LLM供应商可用: {name} (模型: {self.available[name]['model']}, 联网: {cfg['web_search']})")
+                logger.info(f"✓ LLM供应商可用: {name} (模型: {model}, 联网: {cfg['web_search']})")
 
         # 问答供应商顺序
         preferred = os.getenv("LLM_PROVIDER", "").strip().lower()
@@ -864,10 +894,10 @@ class LLMAssistant:
     )
     _REWRITE_SYSTEM = _load_prompt("query_rewrite", _DEFAULT_REWRITE_SYSTEM)
 
-    def _rewrite_query(self, provider: str, user_id: str, question: str) -> str:
+    def _rewrite_query(self, provider: str, user_id: str, question: str, model: str = None) -> str:
         """
         L0 查询改写：结合会话历史+当前北京时间，把追问/代词/相对时间解析为独立完整问题。
-        失败静默回退原问题，不阻塞主流程。
+        失败静默回退原问题，不阻塞主流程。model: 层偏好覆盖（llm_prefs l0/l1）
         """
         try:
             from datetime import datetime, timezone, timedelta
@@ -879,7 +909,7 @@ class LLMAssistant:
                         + history[-6:]
                         + [{"role": "user", "content": question}])
             rewritten = self._chat_once(provider, messages, temperature=0.1,
-                                        timeout=20, enable_search=False)
+                                        timeout=20, enable_search=False, model=model)
             if rewritten:
                 r = rewritten.strip().strip('"').strip()
                 # 剥掉改写模型偶发的元叙述前缀（"改写如下：/改写后的问题是："之类），
@@ -896,6 +926,57 @@ class LLMAssistant:
         except Exception as e:
             logger.warning(f"查询改写失败，使用原问题: {e}")
         return question
+
+    def _resolve_layer(self, layer: str, default_provider: str):
+        """管理员分层模型偏好（common/llm_prefs，/model 指令配置）：
+        Returns (provider, model_override|None)；prefs 供应商未配置时回退默认并告警"""
+        try:
+            from .llm_prefs import get_layer
+            p = get_layer(layer)
+            if p and p["provider"] in self.available:
+                return p["provider"], p["model"]
+            if p:
+                logger.warning(f"层[{layer}]偏好供应商 {p['provider']} 未配置 key，回退默认 {default_provider}")
+        except Exception as e:
+            logger.debug(f"层偏好读取失败[{layer}]: {e}")
+        return default_provider, None
+
+    def list_provider_models(self, provider: str, force: bool = False) -> Optional[List[str]]:
+        """GET /models 拉供应商可用模型清单（OpenAI 兼容端点通用），24h 缓存"""
+        from .llm_prefs import get_models_cache, save_models_cache
+        if provider not in self.available:
+            return None
+        if not force:
+            cached = get_models_cache(provider)
+            if cached:
+                return cached
+        cfg = self.available[provider]
+        base = cfg["base_url"]
+        models_url = base.replace("/chat/completions", "/models")
+        if models_url == base:
+            return None
+        try:
+            r = requests.get(models_url,
+                             headers={"Authorization": f"Bearer {cfg['api_key']}"},
+                             timeout=15, proxies={"http": None, "https": None})
+            if r.status_code != 200:
+                logger.warning(f"[{provider}] /models HTTP {r.status_code}")
+                return None
+            models = sorted(m.get("id") for m in (r.json().get("data") or []) if m.get("id"))
+            if models:
+                save_models_cache(provider, models)
+            return models or None
+        except Exception as e:
+            logger.warning(f"[{provider}] 模型清单获取失败: {e}")
+            return None
+
+    def list_all_models(self, force: bool = False) -> Dict[str, Any]:
+        """各供应商可用模型清单汇总（/models 指令用）：{provider: {"current":…, "models":[…]}}"""
+        out = {}
+        for name, cfg in self.available.items():
+            out[name] = {"current": cfg["model"], "web_search": cfg["web_search"],
+                         "models": self.list_provider_models(name, force=force)}
+        return out
 
     @classmethod
     def name_glossary(cls) -> str:
@@ -936,7 +1017,8 @@ class LLMAssistant:
                     fn_tools: List[Dict[str, Any]],
                     fn_handlers: Dict[str, Any],
                     user_id: str = None,
-                    cancel_event=None):
+                    cancel_event=None,
+                    model: str = None):
         """
         L1 取数层：驱动模型做取数决策，客户端执行工具并收集结果。
         默认 JSON mode（LLM_L1_JSON_MODE=true）：模型只能输出结构化 JSON，
@@ -947,9 +1029,9 @@ class LLMAssistant:
         """
         if os.getenv("LLM_L1_JSON_MODE", "true").strip().lower() == "true":
             return self._l1_collect_json(provider, question, fn_tools, fn_handlers,
-                                         user_id=user_id, cancel_event=cancel_event)
+                                         user_id=user_id, cancel_event=cancel_event, model=model)
         return self._l1_collect_native(provider, question, fn_tools, fn_handlers,
-                                       user_id=user_id, cancel_event=cancel_event)
+                                       user_id=user_id, cancel_event=cancel_event, model=model)
 
     def _l1_tool_manifest(self, fn_tools: List[Dict[str, Any]]) -> str:
         """把 OpenAI 风格 function schema 渲染为 JSON mode 提示词用的紧凑工具清单"""
@@ -965,11 +1047,47 @@ class LLMAssistant:
                             + (f" | 参数: {args_desc}" if args_desc else ""))
         return "\n".join(manifest)
 
+    def _l1_post(self, provider: str, headers: Dict, payload: Dict, req_timeout):
+        """L1 请求带兼容性重试（2026-10-24 分层选模型引入的非默认供应商适配）：
+        - temperature 不兼容（400 且报错含 temperature）→ 去掉重试并记忆（_no_temp_models）
+        - response_format json_object 不支持（400 且报错含 response_format）→ 去掉重试并记忆
+          （JSON 契约由提示词+校验重试兜底）
+        循环结构：每次重试后重新提取报错文本，兼容两种特性都不支持的链式 400"""
+        cfg = self.available[provider]
+        eff_model = payload.get("model") or cfg["model"]
+        if eff_model in self._no_temp_models:
+            payload.pop("temperature", None)
+        if eff_model in self._no_json_mode_models:
+            payload.pop("response_format", None)
+        response = None
+        for _ in range(3):
+            response = requests.post(cfg["base_url"], headers=headers, json=payload,
+                                     timeout=req_timeout, proxies={"http": None, "https": None})
+            if response.status_code != 400:
+                break
+            try:
+                msg = (response.json().get("error") or {}).get("message", "").lower()
+            except Exception:
+                msg = ""
+            if "temperature" in payload and "temperature" in msg:
+                logger.warning(f"L1[{provider}] temperature 不兼容（{eff_model}），已记忆免传")
+                self._no_temp_models.add(eff_model)
+                payload.pop("temperature", None)
+                continue
+            if "response_format" in payload and "response_format" in msg:
+                logger.warning(f"L1[{provider}] response_format 不支持（{eff_model}），已记忆去字段")
+                self._no_json_mode_models.add(eff_model)
+                payload.pop("response_format", None)
+                continue
+            break
+        return response
+
     def _l1_collect_json(self, provider: str, question: str,
                          fn_tools: List[Dict[str, Any]],
                          fn_handlers: Dict[str, Any],
                          user_id: str = None,
-                         cancel_event=None):
+                         cancel_event=None,
+                         model: str = None):
         """
         L1 取数层（JSON mode）：response_format=json_object 强制模型只输出
         {"calls": [{"name": ..., "args": {...}}], "web_search": ["检索词", ...]}，
@@ -998,13 +1116,11 @@ class LLMAssistant:
             if cancel_event is not None and cancel_event.is_set():
                 logger.warning(f"L1取数[{provider}] 收到取消信号，第{round_num + 1}轮前停止")
                 break
-            payload = {"model": cfg["model"], "messages": messages,
+            payload = {"model": model or cfg["model"], "messages": messages,
                        "temperature": 0.1,
                        "response_format": {"type": "json_object"}}
             try:
-                response = requests.post(cfg["base_url"], headers=headers, json=payload,
-                                         timeout=req_timeout,
-                                         proxies={"http": None, "https": None})
+                response = self._l1_post(provider, headers, payload, req_timeout)
             except requests.RequestException as e:
                 logger.error(f"L1取数[{provider}]请求异常: {e}")
                 self._set_error(f"{provider}: L1请求异常 {e}")
@@ -1094,7 +1210,8 @@ class LLMAssistant:
                     fn_tools: List[Dict[str, Any]],
                     fn_handlers: Dict[str, Any],
                     user_id: str = None,
-                    cancel_event=None):
+                    cancel_event=None,
+                    model: str = None):
         """
         L1 取数层（原生 function calling 路径，LLM_L1_JSON_MODE=false 时使用）
         同轮多个工具调用并行执行（LocalCache 有锁，线程安全），显著缩短取数耗时
@@ -1116,12 +1233,10 @@ class LLMAssistant:
             if cancel_event is not None and cancel_event.is_set():
                 logger.warning(f"L1取数[{provider}] 收到取消信号，第{round_num + 1}轮前停止")
                 break
-            payload = {"model": cfg["model"], "messages": messages,
+            payload = {"model": model or cfg["model"], "messages": messages,
                        "temperature": 0.1, "tools": tools}
             try:
-                response = requests.post(cfg["base_url"], headers=headers, json=payload,
-                                         timeout=req_timeout,
-                                         proxies={"http": None, "https": None})
+                response = self._l1_post(provider, headers, payload, req_timeout)
             except requests.RequestException as e:
                 logger.error(f"L1取数[{provider}]请求异常: {e}")
                 self._set_error(f"{provider}: L1请求异常 {e}")
@@ -1272,6 +1387,9 @@ class LLMAssistant:
 
         l1_provider = next((p for p in self.ask_order if not self.available[p]["web_search"]), None)
         l2_provider = next((p for p in self.ask_order if self.available[p]["web_search"]), None)
+        # 管理员分层偏好覆盖（默认 None 不影响现状）
+        l1_provider, l1_model = self._resolve_layer("l1", l1_provider)
+        l2_provider, l2_pref_model = self._resolve_layer("l2", l2_provider)
         if not l1_provider or not l2_provider:
             return self.ask_with_tools(user_id, question, fn_tools, fn_handlers, max_len, data_context,
                                        meta_out=meta_out, cancel_event=cancel_event,
@@ -1286,13 +1404,14 @@ class LLMAssistant:
         if not self._get_history(user_id) and not any(h in question for h in _REF_HINTS):
             standalone = question
         else:
-            standalone = self._rewrite_query(l1_provider, user_id, question)
+            standalone = self._rewrite_query(l1_provider, user_id, question, model=l1_model)
 
         if _cancelled():
             return None
         _set_stage("collect")
         collected, search_queries = self._l1_collect(l1_provider, standalone, fn_tools, fn_handlers,
-                                                     user_id=user_id, cancel_event=cancel_event)
+                                                     user_id=user_id, cancel_event=cancel_event,
+                                                     model=l1_model)
         if collected is None:
             if _cancelled():
                 return None
@@ -1318,7 +1437,7 @@ class LLMAssistant:
 
         # 深度分析模式：分析类工具被调用 → 强制联网 + 推理模型
         deep_mode = any(name in self.DEEP_MODE_TOOLS for name, _ in collected)
-        l2_model = None
+        l2_model = l2_pref_model  # 管理员分层偏好（/model set l2 ...），None=供应商默认
         # L2 输出预算：kimi-k2.6 实测生成速度仅 ~31 tok/s（2026-09-15 探测：
         # 29k输入+2000输出=78s），不封顶时长回答必超读超时（150s）。
         # 1800 tok ≈ 60s ≈ 覆盖1500字回答；被截断由 finish_reason=length 续写逻辑接管
@@ -1336,13 +1455,29 @@ class LLMAssistant:
                 _re_eff = "none"
             l2_extra["reasoning_effort"] = _re_eff
         if deep_mode:
-            l2_model = os.getenv("LLM_DEEP_MODEL", "kimi-k3")
+            _deep_provider, _deep_model = self._resolve_layer("deep", l2_provider)
+            # 深度模式强制联网（$web_search 为 kimi 专属能力）：偏好供应商无联网能力时
+            # 不切换 provider，同时丢弃其模型名（模型不跨供应商通用，否则 404）
+            if _deep_provider != l2_provider:
+                if self.available.get(_deep_provider, {}).get("web_search"):
+                    l2_provider = _deep_provider
+                    l2_model = _deep_model
+                else:
+                    logger.warning(f"deep 层偏好供应商 {_deep_provider} 无联网能力，忽略其覆盖")
+            else:
+                l2_model = _deep_model
+            if not l2_model:
+                # 深度默认推理模型仅 kimi 适用；其他供应商用其默认模型
+                l2_model = os.getenv("LLM_DEEP_MODEL", "kimi-k3") if l2_provider == "kimi" else None
+            # 深度模式整体替换 l2_extra（不封顶——推理 token 计入上限）；
+            # reasoning_effort 仅 kimi 系支持，护栏供应商（当前联网供应商结构性只有 kimi，
+            # 但配置可扩展，防未来误传给不支持的供应商）
             _deep_eff = os.getenv("LLM_DEEP_REASONING", "high").strip().lower()
             if _deep_eff not in ("none", "low", "medium", "high"):
                 logger.warning(f"LLM_DEEP_REASONING 非法值 '{_deep_eff}'，回退 high")
                 _deep_eff = "high"
-            # reasoning_effort 仅 kimi 系支持，按供应商限定（防误传给不支持的供应商）
-            l2_extra = ({"reasoning_effort": _deep_eff} if l2_provider == "kimi" else {})
+            l2_extra = ({"reasoning_effort": _deep_eff}
+                        if l2_provider == "kimi" else {})
             if not search_queries:
                 search_queries = ["媒体对该站升级件效果的技术评论"]
             logger.info(f"进入深度分析模式: model={l2_model} 强制联网")
@@ -1384,7 +1519,12 @@ class LLMAssistant:
 
         user_msg = standalone
         if search_queries:
-            user_msg += "\n\n（请联网检索以下方面补充回答: " + "; ".join(search_queries) + "）"
+            if self.available[l2_provider]["web_search"]:
+                user_msg += "\n\n（请联网检索以下方面补充回答: " + "; ".join(search_queries) + "）"
+            else:
+                # L2 被管理员切到无联网供应商（/model set l2 ...）：注入联网指令
+                # 只会诱发"假装联网"幻觉，改为记日志让模型基于已注入数据回答
+                logger.warning(f"L2 供应商 {l2_provider} 无联网能力，忽略 {len(search_queries)} 条检索需求")
 
         history = self._get_history(user_id)
         messages = ([{"role": "system", "content": system}]
@@ -1474,15 +1614,18 @@ class LLMAssistant:
         Returns:
             识别结果文本，失败返回None
         """
-        if "kimi" not in self.available:
-            logger.warning("图片识别需要Kimi，但未配置MOONSHOT_API_KEY")
+        # 视觉层：默认 kimi（LLM_VISION_MODEL env），管理员可通过 /model set vision 覆盖
+        # （供应商需支持图片输入，/model 指令侧负责校验提示）
+        v_provider, v_model = self._resolve_layer("vision", "kimi")
+        if v_provider not in self.available:
+            logger.warning(f"图片识别供应商 {v_provider} 未配置")
             return None
         urls = [u for u in (image_urls or []) if u][:4]
         if not urls:
             return None
 
-        cfg = self.available["kimi"]
-        vision_model = os.getenv("LLM_VISION_MODEL", "kimi-k2.6")
+        cfg = self.available[v_provider]
+        vision_model = v_model or os.getenv("LLM_VISION_MODEL", "kimi-k2.6")
         content = [{"type": "text", "text": question}]
         for u in urls:
             content.append({"type": "image_url",

@@ -363,13 +363,15 @@ class QQGroupBot:
     # ==================== 业务方法（与企业微信版本保持一致接口） ====================
 
     def _send_card(self, md: str, text: str, at_all: bool = False,
-                   ping_text: str = "👆 赛事动态，请查收") -> bool:
+                   ping_text: str = "👆 赛事动态，请查收",
+                   keyboard: Dict[str, Any] = None) -> bool:
         """Markdown 卡片优先的主动推送
 
         卡片发送成功且 at_all=True 时，补发一条纯文本 @全体成员 短提示
         （QQ 群 md 卡片不支持 @全体）；卡片失败降级纯文本（保留 @全体）。
+        keyboard: 可选内联键盘（{"rows": [...]}）
         """
-        ok = self.send_markdown_message(md, fallback_text=None)
+        ok = self.send_markdown_message(md, fallback_text=None, keyboard=keyboard)
         if ok:
             if at_all:
                 self.send_group_message(ping_text, at_all=True)
@@ -454,8 +456,8 @@ class QQGroupBot:
         return self._send_card(md, text, at_all=True, ping_text=ping)
     
     def send_race_result(self, race_data: Dict[str, Any], results: Dict[str, Any],
-                         lap_record_info: str = None) -> bool:
-        """发送比赛结果（md卡片优先，完整名次+车手头像+车队图标）"""
+                         lap_record_info: str = None, keyboard: Dict[str, Any] = None) -> bool:
+        """发送比赛结果（md卡片优先，完整名次+车手头像+车队图标，可附内联键盘）"""
         from .openf1_api import get_avatar_md, get_team_icon_md
         race_name = race_data.get('raceName', 'F1大奖赛')
 
@@ -511,8 +513,7 @@ class QQGroupBot:
             md += f"\r{lap_record_info}\r"
 
         text += "\n━━━━━━━━━━━━━━━\n#F1 #Formula1"
-        return self._send_card(md, text, at_all=False)
-    
+        return self._send_card(md, text, at_all=False, keyboard=keyboard)
     def send_daily_schedule(self, sessions: List[Dict[str, Any]]) -> bool:
         """发送每日赛程汇总（md卡片 + 双时区时间）"""
         if not sessions:
@@ -727,13 +728,15 @@ Formula 1 🏎️💨"""
 
     # ==================== Markdown 卡片消息 ====================
 
-    def send_markdown_message(self, markdown_content: str, fallback_text: str = None) -> bool:
+    def send_markdown_message(self, markdown_content: str, fallback_text: str = None,
+                              keyboard: Dict[str, Any] = None) -> bool:
         """
         发送Markdown卡片消息（msg_type=2），失败时自动降级为纯文本
 
         Args:
             markdown_content: Markdown内容
             fallback_text: 降级纯文本（不提供则失败返回False）
+            keyboard: 可选内联键盘（{"rows": [...]} 结构，与指令面板同款）
 
         Returns:
             发送是否成功
@@ -753,6 +756,8 @@ Formula 1 🏎️💨"""
                 "markdown": {"content": markdown_content},
                 "msg_seq": random.randint(1, 1000000)
             }
+            if keyboard:
+                message_data["keyboard"] = {"content": keyboard}
 
             response = requests.post(
                 f"{self.base_url}/v2/groups/{self._current_group}/messages",
@@ -973,7 +978,8 @@ Formula 1 🏎️💨"""
                 continue
             has_data = True
             medals = ["🥇", "🥈", "🥉"]
-            names = " ".join(f"{medals[i]}{e['driver_name']}" for i, e in enumerate(top3))
+            names = " ".join(f"{medals[i]}{(e.get('driver_name') or (e.get('Driver') or {}).get('familyName') or '?')}"
+                             for i, e in enumerate(top3[:3]))
             text += f"{session_name}: {names}\n"
             md += f"**{session_name}**\r{names}\r"
 
@@ -983,6 +989,50 @@ Formula 1 🏎️💨"""
 
         text += "\n查看完整成绩: /gp 地点 [年份] 环节\n如: /gp 蒙扎 race"
         md += "\r\r查看完整成绩: `/gp 地点 [年份] 环节`\r如 `/gp 蒙扎 race` · `/gp 斯帕 2022 qualy`"
+        return text, md
+
+    @staticmethod
+    def format_upgrade_season_summary(result: Dict[str, Any]) -> tuple:
+        """赛季升级汇总 (纯文本, Markdown)：全量申报数表 + 重点大升级（major_upgrades）"""
+        season = result.get("season", "")
+        counts = result.get("team_upgrade_counts") or []
+        majors = {mrec["team"]: mrec for mrec in (result.get("major_upgrades") or [])}
+        if not counts:
+            return "", ""
+        text = f"🏎️ 【{season}赛季升级件汇总】（FIA申报口径）\n\n【全量申报数】\n"
+        md = f"## 🏎️ {season}赛季升级件汇总\r> FIA官方申报口径\r\r**全量申报数**\r"
+        for c in counts:
+            line = (f"{c['team']} {c['total_upgrades']}项/{c['gps_with_upgrades']}站"
+                    f"（性能{c.get('performance', 0)}·赛道适配{c.get('circuit_specific', 0)}"
+                    f"·其他{c.get('other', 0)}）")
+            text += line + "\n"
+            md += line + "\r"
+        text += "\n【重点大升级】（性能类核心部件/多件套包）\n"
+        md += "\r**重点大升级**（性能类核心部件/多件套包）\r"
+        for c in counts:
+            rec = majors.get(c["team"]) or {}
+            events = rec.get("major_events") or []
+            if not events:
+                continue
+            text += f"{c['team']}：\n"
+            md += f"**{c['team']}**\r"
+            for e in events[:3]:
+                comps = "、".join(e.get("components") or [])
+                total = e.get("components_total", 0)
+                if total > len(e.get("components") or []):
+                    comps += f" 等{total}件"
+                if not comps:
+                    comps = f"{e.get('n_performance', 0)}项性能件"
+                line = f" R{e.get('round')} {e.get('gp', '')} — {comps}"
+                text += line + "\n"
+                md += line + "\r"
+            if len(events) > 3 or rec.get("more_events"):
+                extra = f" …另有 {len(events) - 3 + rec.get('more_events', 0)} 站大升级"
+                text += extra + "\n"
+                md += extra + "\r"
+        tail = "其余为赛道适配与可靠性小改。明细: /upgrade 车队名、/upgrades 地点"
+        text += "\n" + tail + "\n"
+        md += "\r" + tail
         return text, md
 
     # ==================== 赛历 ====================
@@ -1132,7 +1182,8 @@ Formula 1 🏎️💨"""
         md += f"\r> {note}"
         return text, md
 
-    def send_standings_update(self, standings: Dict[str, Any], race_name: str = "") -> bool:
+    def send_standings_update(self, standings: Dict[str, Any], race_name: str = "",
+                              keyboard: Dict[str, Any] = None) -> bool:
         """赛后积分榜更新（调度器接口，md卡片优先，全量车手+头像+车队图标）"""
         entries = self._parse_driver_standings(standings.get("drivers") or {})
         if not entries:
@@ -1148,7 +1199,7 @@ Formula 1 🏎️💨"""
             rank = medals.get(pos, f"{pos}.")
             text += f"{rank} {name} - {points}分\n"
         text += "\n━━━━━━━━━━━━━━━\n#F1 #Formula1"
-        return self._send_card(md, text, at_all=False)
+        return self._send_card(md, text, at_all=False, keyboard=keyboard)
 
     def send_personalized_standings(self, standings: Dict[str, Any], group_prefs: Dict[str, Dict[str, Any]]) -> bool:
         """

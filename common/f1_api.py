@@ -644,6 +644,11 @@ class F1APIManager:
         
         # 3. 全部失败，尝试加载过期缓存兜底（赛程/积分榜在API双源全挂时仍可用旧数据）
         logger.error(f"[{operation}] 所有API均失败")
+        try:
+            from .metrics import incr as _metric_incr
+            _metric_incr("api_all_failed")
+        except Exception:
+            pass
         stale = self.cache.load(cache_key, allow_expired=True)
         if stale is not None:
             logger.warning(f"[{operation}] 使用过期缓存兜底: {cache_key}")
@@ -1569,27 +1574,28 @@ class F1APIManager:
         return data if isinstance(data, dict) else {"drivers": None, "constructors": None}
     
     @staticmethod
-    def parse_session_datetime(date_str: str, time_str: str) -> datetime:
+    def parse_session_datetime(date_str: str, time_str: str) -> Optional[datetime]:
         """
-        解析比赛日期和时间
-        
+        解析比赛日期和时间（源数据缺日期/时间时返回 None，不抛异常——
+        下游 get_all_sessions 统一过滤）
+
         Args:
             date_str: 日期字符串 (YYYY-MM-DD)
             time_str: 时间字符串 (HH:MM:SSZ)
-            
+
         Returns:
-            UTC时区的datetime对象（f1api.dev返回的是UTC时间）
+            UTC时区的datetime对象（f1api.dev返回的是UTC时间），解析失败返回 None
         """
-        time_str = time_str.replace("Z", "")
-        datetime_str = f"{date_str}T{time_str}"
-        dt = datetime.fromisoformat(datetime_str)
-        
-        # f1api.dev 返回的是UTC时间（带Z后缀）
-        # 直接将其标记为UTC时区，然后转换为北京时间（UTC+8）
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        
-        return dt
+        if not date_str:
+            return None
+        try:
+            time_str = (time_str or "00:00:00Z").replace("Z", "")
+            dt = datetime.fromisoformat(f"{date_str}T{time_str}")
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except Exception:
+            return None
     
     def get_all_sessions(self, race: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
@@ -1673,6 +1679,13 @@ class F1APIManager:
             "round": race["round"]
         })
         
+        # 源数据缺环节日期时 datetime 为 None（f1api.dev 赛季初部分分站缺环节日期）——
+        # 统一在此过滤+告警，保护全部下游消费点（调度/汇总/投影的裸比较）
+        bad = [s for s in sessions if s["datetime"] is None]
+        if bad:
+            logger.warning(f"{race.get('raceName')} 有 {len(bad)} 个环节日期缺失/无法解析，"
+                           f"已跳过: {[s['type'] for s in bad]}")
+            sessions = [s for s in sessions if s["datetime"] is not None]
         sessions.sort(key=lambda x: x["datetime"])
         return sessions
     

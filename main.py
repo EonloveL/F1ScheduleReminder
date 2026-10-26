@@ -45,6 +45,7 @@ try:
     from common.ratings_store import RatingsStore
     from common.qq_group_bot import QQGroupBot
     from common.f1_tools import F1_TOOLS, build_handlers, parse_upgrade_query, find_race_for_query, parse_race_query
+    from common.metrics import incr as _metric_incr  # LLM问答/识图/指令多处共用（模块级导入，防局部导入 NameError）
 except ImportError as e:
     print(f"❌ 导入错误：{e}")
     print("请确保common目录存在，并且包含必要的模块文件")
@@ -461,7 +462,7 @@ COMMAND_NAMES = frozenset([
     "watch", "weather", "setdriver", "setteam", "me", "unbind", "news", "rate", "ratings", "dotd",
     "upgrades", "upgrade", "pu", "car", "clear", "live", "telemetry", "predict", "pace",
     "racechart", "trend", "pitstops", "sc", "qualigap",
-    "kb", "bili_login",
+    "kb", "bili_login", "models", "model",
 ])
 
 
@@ -961,10 +962,25 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                     pass
 
             if answer:
+                _metric_incr("llm_answer_ok")
                 logger.info(f"LLM问答完成 (用户 {member_openid[:8]}...) "
                             f"耗时 {_time.time() - t_start:.0f}s，回答 {len(answer)} 字")
+                answer_body = answer  # 页脚前原文（知识候选不带来源页脚）
                 answer += _build_source_footer(ask_meta)
                 await reply_long_md(message, answer)
+                # 视频导读沉淀：本次问答调用了视频工具 → 导读要点入知识候选（视频=知识来源），
+                # 走同一两层闸门：自动校对→管理员审核
+                try:
+                    if "get_video_summary" in (ask_meta.get("tools") or []) and _kb_factcheck_hook:
+                        from common.knowledge_store import KnowledgeStore
+                        claim = (f"视频导读知识（用户分享的F1视频）\n"
+                                 f"原始消息：{question[:150]}\n导读要点：{answer_body[:300]}")
+                        cid = KnowledgeStore.get().add_candidate(
+                            claim, "video", qid=qid, user_id=member_openid)
+                        if cid:
+                            _kb_factcheck_hook(cid, claim)
+                except Exception as _ve:
+                    logger.warning(f"视频导读知识候选入队失败: {_ve}")
                 # 纠错捕获：候选入队 → 后台事实校对（第一层）→ 管理员审核（第二层）
                 if is_correction and _kb_factcheck_hook:
                     try:
@@ -979,6 +995,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                     except Exception as ke:
                         logger.warning(f"纠错候选入队失败: {ke}")
             else:
+                _metric_incr("llm_answer_timeout" if timed_out else "llm_answer_fail")
                 # 区分供应商级故障（余额/模型下线/限流）与一般失败，方便管理员排查
                 # qid 键控读取：并发问答下实例级 last_error 会被其他用户覆盖
                 provider_err = (llm.get_error(qid) if hasattr(llm, "get_error")
@@ -1207,6 +1224,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                 return
 
             logger.info(f"收到指令: {cmd} {arg} (from {member_openid})")
+            _metric_incr("command_total")
 
             try:
                 if cmd == "/help":
@@ -1315,7 +1333,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         from datetime import timezone as _tz2
                         sessions = f1_api.get_all_sessions(race)
                         now_utc = datetime.now(_tz2.utc)
-                        completed = [s for s in sessions if s["datetime"] < now_utc]
+                        completed = [s for s in sessions if s["datetime"] and s["datetime"] < now_utc]
                         results_map = {}
                         with ThreadPoolExecutor(max_workers=5) as pool:
                             futs = {
@@ -1435,8 +1453,14 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                             return f1cosmos.format_upgrades_by_team_summary(info["team"], season, llm=llm)
                         if race:
                             return f1cosmos.format_upgrades_by_gp(race, season, llm=llm)
-                        if info["year"]:
-                            return ("", "")  # 只给了年份没有车队/分站，无法查询
+                        if info["year"] and not race and not info["team"]:
+                            # 纯年份：赛季升级汇总（全量申报数 + 重点大升级）
+                            from common.f1_tools import build_handlers as _bh
+                            res = _bh(f1_api, f1cosmos, season)["get_upgrades"](
+                                gp_or_team="", year=info["year"])
+                            if "team_upgrade_counts" in res:
+                                return QQGroupBot.format_upgrade_season_summary(res)
+                            return (res.get("error") or res.get("note") or "", "")
                         race = f1_api.get_next_race()
                         if not race:
                             return ("本赛季已无剩余比赛", "")
@@ -1628,8 +1652,18 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                     if race is None:
                         await reply_text(message, "未找到分站（用法：/sc 或 /sc 雪邦、/sc R16）")
                     elif chart_path is None:
-                        await reply_text(message,
-                                         f"{race.get('raceName')} 本站无安全车/VSC/红旗事件（或分站未赛）")
+                        # 区分"数据不可用"与"确认无事件"（双源皆断时禁止误报干净）
+                        from common.chart_factory import get_sc_events as _gse
+                        evts = await loop.run_in_executor(
+                            None, lambda: _gse(SEASON, int(race["round"]), f1_api)
+                        )
+                        if evts is None:
+                            await reply_text(message,
+                                             f"{race.get('raceName')} 安全车数据源当前不可用"
+                                             "（OpenF1 锁定/livetiming 不可达），请赛后重试")
+                        else:
+                            await reply_text(message,
+                                             f"{race.get('raceName')} 本站无安全车/VSC/红旗事件")
                     else:
                         import os as _os
                         await reply_image(message,
@@ -2061,7 +2095,11 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                     schedule = f1_api.get_schedule()
                     if schedule:
                         text, md = QQGroupBot.format_calendar(schedule)
-                        await reply_md(message, text, md)
+                        ics_note = ("\n\n📅 日历订阅（导入手机日历自动同步全年赛程）:\n"
+                                    f"{RATING_BASE_URL}/f1_calendar.ics")
+                        ics_md = (f"\r\r📅 [订阅手机日历版赛程（自动同步/本地时区）]"
+                                  f"({RATING_BASE_URL}/f1_calendar.ics)")
+                        await reply_md(message, text + ics_note, md + ics_md)
                     else:
                         await reply_text(message, "暂无赛历数据")
 
@@ -2281,6 +2319,84 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                     else:
                         await reply_text(message, "当前没有进行中的对话上下文")
 
+                elif cmd == "/models" or cmd == "/model":
+                    # LLM 分层模型配置（管理员）：/models [refresh] 查看 · /model set <层> <供应商/模型> · /model reset [层]
+                    if not ADMIN_OPENIDS:
+                        await reply_text(message, "💡 未配置 ADMIN_OPENIDS")
+                    elif member_openid not in ADMIN_OPENIDS:
+                        await reply_text(message, "⛔ 该指令仅限管理员使用")
+                    elif not llm or not llm.enabled:
+                        await reply_text(message, "💡 LLM 未启用（未配置任何供应商 KEY）")
+                    else:
+                        from common.llm_prefs import (all_layers as _lp_all, set_layer as _lp_set,
+                                                      reset_layer as _lp_reset, LAYERS as _LP_LAYERS,
+                                                      LAYER_NAMES_CN as _LP_CN)
+                        a = (arg or "").strip()
+                        import asyncio as _aio
+                        loop = _aio.get_running_loop()
+
+                        def _layer_defaults():
+                            d_l1 = next((p for p in llm.ask_order if not llm.available[p]["web_search"]), None)
+                            d_l2 = next((p for p in llm.ask_order if llm.available[p]["web_search"]), None)
+                            return {"l0": d_l1, "l1": d_l1, "l2": d_l2, "deep": d_l2, "vision": "kimi"}
+
+                        if cmd == "/models" or not a:
+                            force = "refresh" in a
+                            if force:
+                                await reply_text(message, "🔍 正在向各供应商拉取模型清单…")
+                            allm = await loop.run_in_executor(None, lambda: llm.list_all_models(force=force))
+                            prefs = _lp_all()
+                            defaults = _layer_defaults()
+                            lines = ["## 🤖 LLM 模型配置\r", "**当前生效**（层：供应商/模型，*=管理员覆盖）\r"]
+                            for layer in _LP_LAYERS:
+                                prov, mdl = llm._resolve_layer(layer, defaults[layer])
+                                mdl = mdl or (llm.available.get(prov) or {}).get("model", "?")
+                                mark = "*" if layer in prefs else ""
+                                lines.append(f"{_LP_CN[layer]}（{layer}）: {prov}/{mdl}{mark}\r")
+                            lines.append("\r**各供应商可用模型**\r")
+                            for prov, info in allm.items():
+                                ms = info.get("models") or []
+                                shown = "、".join(ms[:12]) + (f" 等{len(ms)}个" if len(ms) > 12 else "")
+                                lines.append(f"{prov}（当前 {info['current']}{'·联网' if info.get('web_search') else ''}）: {shown or '清单拉取失败'}\r")
+                            lines.append("\r用法: `/model set l2 kimi/kimi-k3` · `/model reset l2` · `/models refresh`")
+                            await reply_md(message, "\n".join(lines).replace("\r", "\n"),
+                                           "".join(lines))
+                        elif a.startswith("set "):
+                            parts = a[4:].split()
+                            if len(parts) != 2 or "/" not in parts[1]:
+                                await reply_text(message, "用法: /model set <层> <供应商/模型>\n层: l0/l1/l2/deep/vision，如 /model set l2 kimi/kimi-k3")
+                                return
+                            layer, pm = parts
+                            prov, mdl = pm.split("/", 1)
+                            if layer not in _LP_LAYERS:
+                                await reply_text(message, f"未知层「{layer}」，可选: {'/'.join(_LP_LAYERS)}")
+                                return
+                            if prov not in llm.available:
+                                await reply_text(message, f"供应商「{prov}」未配置 KEY，当前可用: {', '.join(llm.available)}")
+                                return
+                            known = await loop.run_in_executor(None, lambda: llm.list_provider_models(prov))
+                            warns = []
+                            if known and mdl not in known:
+                                warns.append(f"模型「{mdl}」不在 {prov} 已拉到的清单中（可能是清单陈旧或键入错误）")
+                            if layer == "vision" and prov != "kimi":
+                                warns.append("该供应商模型需支持图片输入（base64 image_url），不支持的模型识图会失败")
+                            if layer == "l2" and not llm.available[prov]["web_search"]:
+                                warns.append("该供应商无联网搜索能力，L2 切到它后需要核实的回答将不再联网")
+                            if layer == "l1" and prov == "kimi":
+                                warns.append("kimi-k2.x/k3 强制 temperature=1，L1 已内置自动免传重试，首轮会多一次 400 往返")
+                            _lp_set(layer, prov, mdl)
+                            tail = ("\n⚠️ " + "；".join(warns)) if warns else ""
+                            await reply_text(message, f"✅ 已设置 {_LP_CN[layer]}（{layer}）→ {prov}/{mdl}{tail}\n立即生效，/model reset {layer} 恢复默认")
+                        elif a.startswith("reset"):
+                            layer = a[5:].strip()
+                            if layer and layer not in _LP_LAYERS:
+                                await reply_text(message, f"未知层「{layer}」，可选: {'/'.join(_LP_LAYERS)}")
+                                return
+                            _lp_reset(layer or None)
+                            await reply_text(message, f"✅ 已重置{'层「' + layer + '」' if layer else '全部层'}为默认模型")
+                        else:
+                            await reply_text(message, "用法: /models [refresh] 查看 · /model set <层> <供应商/模型> · /model reset [层]")
+
                 elif cmd == "/bili_login":
                     # B站扫码登录（管理员）：解锁字幕/元数据接口（机房IP匿名访问可能被412风控）
                     if not ADMIN_OPENIDS:
@@ -2391,10 +2507,16 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                                 await reply_text(message, "\n".join(lines))
 
                 else:
-                    await reply_text(message, f"未知命令: {cmd}\n发送 /help 查看命令列表")
+                    # 指令纠错建议：difflib 模糊匹配最接近的指令（确定性，不烧 LLM）
+                    import difflib as _difflib
+                    guess = _difflib.get_close_matches(cmd.lstrip("/"), sorted(COMMAND_NAMES),
+                                                       n=1, cutoff=0.6)
+                    hint = f"\n你是不是想用 /{guess[0]} ？" if guess else ""
+                    await reply_text(message, f"未知命令: {cmd}{hint}\n发送 /help 查看命令列表")
 
             except Exception as e:
-                logger.error(f"处理指令失败: {e}")
+                logger.exception(f"处理指令失败 [{cmd} {arg}]: {e}")
+                _metric_incr("command_error")
                 try:
                     await reply_text(message, "⚠️ 指令处理失败，请稍后重试")
                 except Exception:
@@ -2561,7 +2683,26 @@ class F1ReminderApp:
         except Exception as e:
             self.logger.error(f"❌ QQ机器人初始化失败: {e}")
             return False
-        
+
+        # 注册管理员告警钩子（common/ 层数据源异常 → DM ADMIN_OPENIDS）
+        try:
+            from common.admin_alert import set_admin_alert_hook
+
+            def _admin_alert(title, detail):
+                if not (ADMIN_OPENIDS and self.qq_bot):
+                    return
+                plain = f"⚠️ {title}\n{detail}"
+                md = f"## ⚠️ {title}\r\r{detail}"
+                for admin in ADMIN_OPENIDS:
+                    try:
+                        self.qq_bot.send_dm_markdown(admin, md, fallback_text=plain)
+                    except Exception:
+                        pass
+
+            set_admin_alert_hook(_admin_alert)
+        except Exception as e:
+            self.logger.warning(f"管理员告警钩子注册失败: {e}")
+
         # 初始化调度器
         try:
             self.prefs_store = UserPrefsStore()
@@ -2684,6 +2825,11 @@ class F1ReminderApp:
         from common.knowledge_store import KnowledgeStore
         ks = KnowledgeStore.get()
         try:
+            # 兜底校对：无实时钩子来源的候选（scheduler 的 data_update 等），每周一并校对
+            if _kb_factcheck_hook:
+                for c in ks.pending_factcheck_candidates():
+                    if c.get("source") != "distill":  # distill 本批下面会走
+                        _kb_factcheck_hook(c["id"], c["claim"])
             entries = ks.read_qa_since(7)
             if len(entries) < 5:
                 self.logger.info(f"知识蒸馏跳过：近7天归档不足（{len(entries)} 条）")

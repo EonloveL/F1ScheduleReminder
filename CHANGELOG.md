@@ -6,6 +6,26 @@
 
 ---
 
+## 2026-10-26 · 分层模型偏好 + 多供应商扩展 + 运营观测体系
+
+【新增】
+- `/models` `/model` 管理员指令：LLM 分层模型偏好（l0 改写/l1 取数/l2 成文/deep 深度分析/vision 识图逐层可换供应商+模型，`/models` 拉供应商实时清单校验），配置立即生效、可一键回默认
+- LLM 供应商扩展：新增 OpenAI 兼容通用端点（自建网关/三方服务）、OpenRouter、Gemini 三个可选供应商
+- 每日 9:30 管理员自检：数据源连通性（f1api.dev/Jolpica/OpenF1/F1Cosmos/FIA）+ LLM 可用性 + 指标计数，异常才 DM 打扰（20h 去重）
+- 进程内指标计数（`common/metrics.py`）：指令/LLM/API 失败计数终身累计、定期落盘，自检按增量告警防疲劳
+- 赛后成绩卡/积分榜卡附内联键盘（一键出三联图/Pace/进站对比/积分榜/走势）
+- `/calendar` 附 ICS 订阅链接（手机日历自动同步全年赛程，双源全挂时返回 503 防订阅端清空）
+- 指令打错字时 difflib 建议最接近的指令
+- 视频导读/圈速纪录更新自动沉淀为知识候选（走同一两层闸门）
+- FIA 文档解析为空的版式变更告警（管理员 DM，12h 去重）
+
+【修复】
+- 环节日期缺失时下游裸比较全线 TypeError（parse_session_datetime 改 None-safe + get_all_sessions 统一过滤）
+- PU 用量赛前查询叠加 FIA 新申报文档（累计表周末口径滞后一站的实证修复）
+- PU 信息 PDF 解析锚定标签行 + 列数校验 + 实质字段校验（防错位跨套与空壳缓存）
+- matplotlib 3.10+ boxplot `vert` 弃用兼容（orientation 双写）
+- L1 原生 function calling 在 finish_reason=stop 且带 tool_calls 时误丢弃工具调用
+
 ## 2026-10-26 · B站视频导读
 
 【新增】
