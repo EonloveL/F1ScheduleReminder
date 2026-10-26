@@ -461,7 +461,7 @@ COMMAND_NAMES = frozenset([
     "watch", "weather", "setdriver", "setteam", "me", "unbind", "news", "rate", "ratings", "dotd",
     "upgrades", "upgrade", "pu", "car", "clear", "live", "telemetry", "predict", "pace",
     "racechart", "trend", "pitstops", "sc", "qualigap",
-    "kb",
+    "kb", "bili_login",
 ])
 
 
@@ -616,6 +616,8 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
     # 同用户在途请求互斥（文字/识图共用）：上一条未答完时拒绝新提问，
     # 对应Agent架构的会话级存活流互斥（深度分析最长180s，20s冷却拦不住同用户并发）
     _llm_inflight = set()
+    # /bili_login 防重入状态（type 造轻量命名空间，属性可写）
+    _bili_login_state = type("BiliLoginState", (), {"inflight": False})()
     _llm_inflight_lock = _threading.Lock()
 
     # AI数据快照缓存（避免每次提问都重建，TTL 5分钟）
@@ -785,6 +787,19 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
             # 引用消息：用户引用（回复）机器人此前推送的卡片/消息时，取回其内容注入AI上下文
             full_question = question
             ref_content = None
+            try:
+                # B站链接确定性前置拦截（裸链接无指令词时 L1 可能不调
+                # get_video_summary 直接凭印象拒答——提示词不可靠，意图注入代码兜底）
+                from common.bilibili_summary import BiliVideoClient as _BVC
+                _bvid = _BVC.parse_bvid(question)
+                if _bvid:
+                    full_question = (
+                        f"用户发来B站视频链接（BV号 {_bvid}），希望AI总结/讲解该视频内容。"
+                        f"必须调用 get_video_summary 工具（url 传原始链接或 {_bvid}）获取字幕文本后再回答，"
+                        "禁止直接说无法访问视频。\n"
+                        f"【用户原始消息】{question}")
+            except Exception:
+                pass
             try:
                 ref = getattr(message, "message_reference", None)
                 ref_id = getattr(ref, "message_id", None) if ref else None
@@ -2265,6 +2280,80 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         await reply_text(message, "🧹 已清空你的AI对话上下文，换个话题重新聊吧")
                     else:
                         await reply_text(message, "当前没有进行中的对话上下文")
+
+                elif cmd == "/bili_login":
+                    # B站扫码登录（管理员）：解锁字幕/元数据接口（机房IP匿名访问可能被412风控）
+                    if not ADMIN_OPENIDS:
+                        await reply_text(message, "💡 未配置 ADMIN_OPENIDS，扫码登录不可用")
+                    elif member_openid not in ADMIN_OPENIDS:
+                        await reply_text(message, "⛔ 该指令仅限管理员使用")
+                    elif not qq_bot:
+                        await reply_text(message, "⚠️ QQ推送未就绪")
+                    else:
+                        # 防重入：同时只允许一个扫码流程（连发两次会产生
+                        # 一张已过期二维码的迟到的"已过期"误报）
+                        if getattr(_bili_login_state, "inflight", False):
+                            await reply_text(message, "⏳ 已有一张待扫码的登录二维码，请先完成或等3分钟过期")
+                            return
+                        _bili_login_state.inflight = True
+                        try:
+                            from common import bili_auth as _ba
+                            qr = _ba.qrcode_generate()
+                            if not qr:
+                                _bili_login_state.inflight = False
+                                await reply_text(message, "⚠️ 二维码生成失败，请稍后重试")
+                                return
+                            import os as _os
+                            import time as _t
+                            import threading as _th
+                            from common.ratings_store import EXPORTS_DIR as _EXP
+                            fname = f"bili_qr_{int(_t.time())}.png"
+                            fpath = _os.path.join(_EXP, fname)
+                            _os.makedirs(_EXP, exist_ok=True)
+                            if not _ba.qrcode_render_png(qr["url"], fpath):
+                                _bili_login_state.inflight = False
+                                await reply_text(message, "⚠️ 二维码渲染失败（qrcode库未安装，需重建镜像）")
+                                return
+                            img_url = f"{RATING_BASE_URL}/exports/{fname}"
+                            # 二维码私聊发给操作者本人，防群内他人误扫绑定错账号
+                            ok = qq_bot.reply_image_url(member_openid, img_url,
+                                                        content="📱 B站扫码登录（3分钟内有效）",
+                                                        is_dm=True)
+                            await reply_text(message,
+                                "📱 登录二维码已私聊发你，用B站App扫码确认（3分钟内有效）" if ok
+                                else f"⚠️ 私聊发图失败，请手动打开（注意保密，3分钟有效）: {img_url}")
+
+                            def _poll_bili_login():
+                                try:
+                                    result = _ba.qrcode_poll(qr["qrcode_key"], timeout_sec=180)
+                                    if result:
+                                        _ba.save_cookie(result["SESSDATA"], {"via": "qrcode"})
+                                        v = _ba.validate_cookie(result["SESSDATA"])
+                                        status = (f"登录账号：{v.get('uname', '?')}\r"
+                                                  f"登录态：{'✅' if v.get('login_ok') else '❌'}\r"
+                                                  f"元数据接口（view）：{'✅ 已解锁' if v.get('view_ok') else '❌ 仍被风控'}")
+                                        qq_bot.send_dm_markdown(
+                                            member_openid,
+                                            f"## ✅ B站扫码登录成功\r\r{status}",
+                                            fallback_text=f"B站扫码登录成功\n{status}")
+                                    else:
+                                        qq_bot.send_dm_message(
+                                            member_openid, "B站登录二维码已过期或取消，需要时重新发 /bili_login")
+                                except Exception as e:
+                                    logger.warning(f"[BiliLogin] 后台轮询异常: {e}")
+                                finally:
+                                    _bili_login_state.inflight = False
+                                    try:
+                                        _os.remove(fpath)  # 登录二维码用完即删
+                                    except OSError:
+                                        pass
+
+                            _th.Thread(target=_poll_bili_login, daemon=True,
+                                       name="bili-login-poll").start()
+                        except Exception:
+                            # 线程启动前的任何异常都要释放防重入标记，否则卡死到重启
+                            _bili_login_state.inflight = False
+                            raise
 
                 elif cmd == "/kb":
                     # 知识库审核（管理员专用）：/kb 看待审 · /kb ok <id> 入库 · /kb no <id> 拒绝

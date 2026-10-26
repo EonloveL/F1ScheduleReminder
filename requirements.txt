@@ -33,3 +33,6 @@ pdfplumber>=0.11.0
 # F1 livetiming 归档兜底（Chrome TLS 指纹伪装，部分机房 IP 被 F1 CDN 按指纹 403；
 # 未安装时自动回退 requests，装它能救活）
 curl-cffi>=0.7.0
+
+# B站扫码登录二维码渲染（/bili_login；matplotlib 已带入 Pillow）
+qrcode>=7.4

@@ -10,9 +10,14 @@ build_handlers() 返回 {tool_name: callable} 处理函数字典，
 """
 
 import logging
+import threading as _threading
 from typing import Dict
 
 logger = logging.getLogger(__name__)
+
+# B站ASR in-flight 去重：同 bvid 并发时后到者等首个结果，防双份下载+ASR占用LLM槽位
+_bili_asr_inflight: Dict[str, _threading.Event] = {}
+_bili_asr_inflight_lock = _threading.Lock()
 
 
 def _lap_to_sec(t) -> float:
@@ -79,6 +84,7 @@ F1_TOOLS = [
     {"type": "function", "function": {"name": "get_race_charts", "description": "获取分站可视化统计图表（返回 chart_md 图片链接，必须原文嵌入回答展示给用户）。chart 类型：race_report=赛后三联图（pace分布+轮胎策略+名次变化，默认）、pace=正赛pace分布箱线图、strategy=轮胎策略时间线（按配方着色）、positions=发车→完赛名次变化、quali_gap=排位差距（杆位金色）、sprint_quali_gap=冲刺排位差距、pitstop=进站时长车队对比箱线图。问某站 pace 分布/轮胎策略/名次变化/排位差距/进站耗时/赛后统计图时必须调用本工具并嵌入 chart_md，禁止只说「没有图」。gp为分站名（中英文/轮次R5），留空取最近一场已完赛", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "分站名或轮次"}, "chart": {"type": "string", "description": "图表类型：race_report(默认)/pace/strategy/positions/quali_gap/sprint_quali_gap/pitstop"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_destructors", "description": "获取车手/车队事故维修成本统计（destructors，部件申报价×更换数量估算）+ 事故成本柱图（chart_md 必须原文嵌入）。query 留空=全赛季车手榜+车队榜；query 为车手或车队名（中英文）= 该对象分站明细。问事故成本/修车费用/谁撞车最多/撞车损失时必须调用，禁止凭印象", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "车手或车队名，留空为全部"}, "year": {"type": "integer", "description": "赛季年份，留空为当前赛季"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_championship_outlook", "description": "总冠军争夺推演：剩余赛程满分推算（正赛25/冲刺8）+ 理论存活判定 + 领跑者锁冠分站 + 两种概率数值（均匀随机蒙特卡洛的理论概率 / 名次制回归+残差蒙特卡洛的模型概率）。问\"谁还有理论夺冠可能/理论夺冠概率/总冠军概率/争冠形势\"时必须调用，给出具体数值，禁止只说定性判断", "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {"name": "get_video_summary", "description": "B站视频内容导读：用户发来B站（bilibili/b23.tv）视频链接希望AI总结/讲解/帮助理解视频内容（如气动分析、战术复盘、赛事解读）时调用。返回视频字幕文本（或ASR转写），据此生成中文导读：一句话结论→分节要点（保留关键数据与结论）→F1术语解释。返回 is_f1=false 表示非F1相关视频（关键词门禁），直接告知用户不予总结、禁止再调其他工具；返回 no_text=true 表示无字幕且转写不可用，直接告知该视频暂不支持导读，禁止编造内容", "parameters": {"type": "object", "properties": {"url": {"type": "string", "description": "B站视频链接或BV号"}}, "required": ["url"]}}},
 ]
 
 
@@ -1111,6 +1117,89 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
                                                 "（通常比赛周四挂出）或不存在"}
         return {"race": race_name, **result}
 
+    def _video_summary(url=""):
+        """B站视频导读：F1关键词门禁 → 字幕 → ASR兜底（common/bilibili_summary）。
+        结果按 bvid 缓存（字幕/ASR文本不变长缓存，无文本负结果6h）——同视频重复提问不重跑ASR"""
+        import os as _os
+        from .bilibili_summary import BiliVideoClient
+        client = BiliVideoClient()
+        bvid = BiliVideoClient.parse_bvid(url or "")
+        if not bvid:
+            return {"error": "未识别到B站视频链接（支持 BV号/av号/b23短链）"}
+        cache = getattr(f1_api, "cache", None)
+        cache_key = f"bili_summary_v1_{bvid}"
+        info = client.get_video_info(bvid)
+        if not info:
+            return {"error": f"视频信息获取失败（{bvid}），可能已删除/审核中或接口风控"}
+        if not info.get("cid"):
+            return {"error": f"视频 {bvid} 缺少 cid（分P信息异常），无法取字幕"}
+        base = {"title": info["title"], "uploader": info["owner"],
+                "duration_min": round(info["duration"] / 60, 1), "bvid": bvid}
+        is_f1, hits = BiliVideoClient.is_f1_related(info)
+        if not is_f1:
+            return {**base, "is_f1": False,
+                    "note": "该视频未命中F1关键词门禁，直接回复用户\"该视频似乎与F1无关，不予总结\"，禁止再调用任何工具"}
+        if cache:
+            cached = cache.load(cache_key)
+            if cached:
+                return {**base, "is_f1": True, **cached}
+        text, status = client.get_subtitle(bvid, info["cid"])
+        source = "subtitle"
+        if not text and _os.getenv("BILI_VIDEO_ASR_ENABLED", "false").lower() == "true":
+            # ASR 为分钟级阻塞（占 L1 槽位至结束）：默认上限 8 分钟，防长视频堵死并发
+            try:
+                max_min = float(_os.getenv("BILI_VIDEO_ASR_MAX_MIN", "8"))
+            except ValueError:
+                max_min = 8.0
+            if info["duration"] <= max_min * 60:
+                # in-flight 去重：同 bvid 并发时后到者等首个结果（最长等 4 分钟）
+                with _bili_asr_inflight_lock:
+                    ev = _bili_asr_inflight.get(bvid)
+                    if ev is None:
+                        ev = _threading.Event()
+                        _bili_asr_inflight[bvid] = ev
+                        leader = True
+                    else:
+                        leader = False
+                if not leader:
+                    ev.wait(timeout=240)
+                    if cache:
+                        cached = cache.load(cache_key)
+                        if cached:
+                            return {**base, "is_f1": True, **cached}
+                else:
+                    try:
+                        audio_urls = client.get_audio_url_candidates(bvid, info["cid"])
+                        if audio_urls:
+                            text = client.transcribe_audio(audio_urls)
+                            if text:
+                                source = "asr"
+                                status = f"ASR转写（{status}）"
+                    finally:
+                        with _bili_asr_inflight_lock:
+                            _bili_asr_inflight.pop(bvid, None)
+                        ev.set()
+        if not text:
+            login_hint = ("" if client.logged_in else
+                          "；机器人未配置B站登录态，管理员可发 /bili_login 扫码解锁字幕")
+            out = {**base, "is_f1": True, "no_text": True,
+                   "note": f"字幕不可用（{status}{login_hint}），直接回复用户该视频暂不支持导读，禁止编造内容"}
+            if cache:
+                cache.save(cache_key, {"no_text": True,
+                                       "note": out["note"]}, ttl_hours=6)
+            return out
+        try:
+            cap = int(_os.getenv("BILI_VIDEO_TEXT_CAP", "12000"))
+        except ValueError:
+            cap = 12000
+        payload = {"source": source, "text_status": status,
+                   "text": text[:cap], "truncated": len(text) > cap,
+                   "note": "这是视频字幕/转写文本，据此生成中文导读（一句话结论→分节要点→F1术语解释）；"
+                           "truncated=true 时注明仅覆盖前部分内容"}
+        if cache:
+            cache.save(cache_key, payload, ttl_hours=None)  # 视频字幕/转写不可变，永久缓存
+        return {**base, "is_f1": True, **payload}
+
     return {
         "get_driver_standings": _drv_standings,
         "get_constructor_standings": _ctr_standings,
@@ -1132,4 +1221,5 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         "get_safety_car_events": _safety_car_events,
         "get_race_charts": _race_charts,
         "get_destructors": _destructors,
+        "get_video_summary": _video_summary,
     }

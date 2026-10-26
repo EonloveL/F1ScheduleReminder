@@ -51,6 +51,9 @@ services:
       - LIVE_BASE_URL=${LIVE_BASE_URL:-}
       - OPENF1_USERNAME=${OPENF1_USERNAME:-}
       - OPENF1_PASSWORD=${OPENF1_PASSWORD:-}
+      - BILIBILI_SESSDATA=${BILIBILI_SESSDATA:-}
+      - BILI_VIDEO_ASR_ENABLED=${BILI_VIDEO_ASR_ENABLED:-false}
+      - BILI_VIDEO_ASR_MAX_MIN=${BILI_VIDEO_ASR_MAX_MIN:-8}
     volumes:
       - ../data:/app/data
     networks:
