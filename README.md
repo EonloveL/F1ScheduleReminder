@@ -203,6 +203,10 @@ OpenF1 对未认证用户在**现场环节窗口**（比赛周末各环节进行
 - Python 3.8+，密钥与群 ID 全部走环境变量，仓库不含任何私密信息
 - 运行时数据（用户偏好、评分、会话记忆、缓存）写入 `data/`，已 gitignore
 
+## 更新日志
+
+见 [CHANGELOG.md](CHANGELOG.md)（每次推送追加，面向用户可读的分类条目）
+
 ## License
 
 [MIT](LICENSE)
