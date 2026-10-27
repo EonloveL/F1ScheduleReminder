@@ -6,6 +6,16 @@
 
 ---
 
+## 2026-10-27 · Team Radio 卡片 DIY + ICS 日历订阅
+
+【新增】
+- `/tr 车手 引语`：F1 转播风格 Team Radio 静态卡片 DIY（队色斜切条/车手头像/号码/队标/九区块伪波形；视觉规范参照 [wertewrt/F1_team_radio](https://github.com/wertewrt/F1_team_radio)，致谢该项目）
+- `/calendar` 附 ICS 订阅链接：手机日历订阅后全年赛程自动同步、本地时区显示（新增 `/f1_calendar.ics` 端点；双源全挂返回 503 防订阅端清空已同步赛事）
+
+【修复】
+- ICS 路由的 503 有意响应不再被通用异常处理吞成 500
+- matplotlib 3.10+ boxplot `vert` 弃用兼容（orientation/vert 双写，新旧版本均可）
+
 ## 2026-10-26 · 分层模型偏好 + 多供应商扩展 + 运营观测体系
 
 【新增】

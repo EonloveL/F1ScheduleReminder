@@ -19,10 +19,11 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 from flask import Flask, abort, jsonify, render_template_string, request, send_from_directory
+from werkzeug.exceptions import HTTPException
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
@@ -597,10 +598,12 @@ def f1_calendar_ics():
                 desc = f"北京时间 {bj.strftime('%m月%d日 %H:%M')} · {s.get('circuit','')}"
                 lines += ["BEGIN:VEVENT",
                           f"UID:{s['round']}-{s['type']}@f1-schedule-reminder",
-                          f"DTSTAMP:{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}",
+                          f"DTSTAMP:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
                           f"DTSTART:{start}", f"DTEND:{end}",
                           f"SUMMARY:{_esc(summary)}", f"LOCATION:{_esc(s.get('circuit',''))}",
                           f"DESCRIPTION:{_esc(desc)}", "END:VEVENT"]
+    except HTTPException:
+        raise  # abort(503) 是有意响应，不能被通用 except 吞成 500
     except Exception as e:
         logger.error(f"ICS 生成失败: {e}")
         abort(500)
@@ -623,7 +626,8 @@ def exports(filename):
             or filename.startswith("team_radar_") or filename.startswith("destructors_chart_")
             or filename.startswith("pu_usage_") or filename.startswith("pitstop_chart_")
             or filename.startswith("sc_timeline_") or filename.startswith("weather_chart_")
-            or filename.startswith("weather_fc_") or filename.startswith("bili_qr_")):
+            or filename.startswith("weather_fc_") or filename.startswith("bili_qr_")
+            or filename.startswith("tr_card_")):
         abort(404)
     return send_from_directory(EXPORTS_DIR, filename)
 

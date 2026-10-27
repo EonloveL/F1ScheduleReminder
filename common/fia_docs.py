@@ -842,6 +842,7 @@ class FIADocsAPI(F1CosmosAPI):
                         if rows:
                             logger.info(f"✓ 升级件来自FIA当前分站文档（{cur}，{len(rows)}项）")
                             return rows
+                        _alert_empty_parse("升级件", cur, season, url)
                 return []  # 当前分站申报文档尚未发布
 
         cache_key = f"fia_event_upgrades_{season}_{re.sub(r'[^a-z0-9]+', '_', event_name.lower()).strip('_')}"
@@ -869,6 +870,8 @@ class FIADocsAPI(F1CosmosAPI):
                                 for it in items:
                                     it["round"] = round_num
                             logger.info(f"✓ 升级件来自FIA历史文档（{season} {official}，{len(items)}项）")
+                        else:
+                            _alert_empty_parse("升级件", official, season, url)
         except Exception as e:
             logger.warning(f"FIA事件升级件获取失败({season} {event_name}): {e}")
             return []
@@ -1060,6 +1063,8 @@ class FIADocsAPI(F1CosmosAPI):
                             rows = self.parse_pu_used_pdf(pdf, gp_name=event)
                             if rows:
                                 logger.info(f"✓ PU用量来自FIA历史文档（{season}赛季末 {event}，{len(rows)}位车手）")
+                            else:
+                                _alert_empty_parse("PU用量(历史)", event, season, url)
         except Exception as e:
             logger.warning(f"FIA历史PU文档获取失败({season}): {e}")
         if self.cache and (rows or fetched_ok):

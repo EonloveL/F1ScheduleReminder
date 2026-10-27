@@ -25,6 +25,10 @@
 |---|---|
 | ![天气预报](docs/preview/weather_forecast.png) | ![安全车时间线](docs/preview/sc_timeline.png) |
 
+| Team Radio 卡片 DIY（`/tr 车手 引语`） |
+|---|
+| ![TR卡片](docs/preview/tr_card.png) |
+
 ## 快速部署
 
 ### 前置条件
@@ -206,6 +210,11 @@ OpenF1 对未认证用户在**现场环节窗口**（比赛周末各环节进行
 ## 更新日志
 
 见 [CHANGELOG.md](CHANGELOG.md)（每次推送追加，面向用户可读的分类条目）
+
+## 致谢
+
+- TR 卡片（`/tr` 指令）的转播视觉规范参照 [wertewrt/F1_team_radio](https://github.com/wertewrt/F1_team_radio)（329:176 卡片布局/队色表/九区块波形），静态图版本为本项目自研 PIL 实现
+- 数据源致谢：f1api.dev · Jolpica (Ergast 兼容) · OpenF1 · Open-Meteo · FIA 官方文档 · F1Cosmos
 
 ## License
 

@@ -183,6 +183,7 @@ HELP_TEXT = """🏎️ F1机器人命令列表：
 /pitstops [地点/R几] - 进站时长车队对比箱线图
 /sc [地点/R几] - 安全车/VSC/红旗事件时间线
 /qualigap [地点/R几] - 排位差距图（杆位金色，含冲刺排位 /qualigap 雪邦 sq）
+/tr 车手 引语 - DIY转播风格Team Radio卡片（如 /tr 维斯塔潘 simply lovely）
 /telemetry - 遥测/圈速/赛果可视化分析（F1Cosmos仪表盘链接）
 /setdriver 车手名 - 添加关注车手（如 /setdriver 维斯塔潘，最多3位）
 /setteam 车队名 - 添加关注车队（如 /setteam 法拉利，最多3支）
@@ -263,6 +264,7 @@ HELP_MARKDOWN = """## 🏎️ F1机器人指令面板
 /pitstops [地点/R几] 进站时长车队对比箱线图
 /sc [地点/R几] 安全车/VSC/红旗事件时间线
 /qualigap [地点/R几] 排位差距图（含冲刺排位，加 sq 后缀）
+/tr 车手 引语 DIY转播风格TR卡片
 /car [车队] 事故维修成本
 
 **⭐ 车手评分**
@@ -461,7 +463,7 @@ COMMAND_NAMES = frozenset([
     "help", "drivers", "teams", "calendar", "next", "last", "gp",
     "watch", "weather", "setdriver", "setteam", "me", "unbind", "news", "rate", "ratings", "dotd",
     "upgrades", "upgrade", "pu", "car", "clear", "live", "telemetry", "predict", "pace",
-    "racechart", "trend", "pitstops", "sc", "qualigap",
+    "racechart", "trend", "pitstops", "sc", "qualigap", "tr",
     "kb", "bili_login", "models", "model",
 ])
 
@@ -1856,6 +1858,24 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         await reply_image(message,
                                           f"{RATING_BASE_URL}/exports/{_os.path.basename(chart_path)}",
                                           content=f"📊 {race.get('raceName')} 正赛 Pace 分布统计图")
+
+                elif cmd == "/tr":
+                    # DIY F1转播风格 Team Radio 卡片（静态图，/tr 车手 引语）
+                    if not arg or " " not in arg.strip():
+                        await reply_text(message, "用法: /tr 车手 引语\n如: /tr 维斯塔潘 simply lovely\n/tr kimi check the car")
+                        return
+                    import asyncio as _aio
+                    loop = _aio.get_running_loop()
+                    dq, quote = arg.strip().split(" ", 1)
+                    from common.tr_card import render_tr_card
+                    path, err = await loop.run_in_executor(None, render_tr_card, dq, quote)
+                    if not path:
+                        await reply_text(message, f"⚠️ {err}")
+                        return
+                    import os as _os
+                    await reply_image(message,
+                                      f"{RATING_BASE_URL}/exports/{_os.path.basename(path)}",
+                                      content=f"📻 {dq} 的 Team Radio 卡")
 
                 elif cmd == "/car":
                     if not f1cosmos:
