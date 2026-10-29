@@ -1,0 +1,33 @@
+# Discord Bot（py-cord，斜杠指令原生支持）
+py-cord>=2.4.0,<3
+
+# 定时任务调度
+APScheduler>=3.10.0,<4
+
+# 时区支持
+pytz>=2023.3
+
+# HTTP 请求
+requests>=2.28.0,<3
+
+# 日期时间处理
+python-dateutil>=2.8.0,<3
+
+# .env 配置加载
+python-dotenv>=1.0.0,<2
+
+# 统计图表渲染（>=3.10 因 boxplot orientation= 参数在 3.13 移除 vert=）
+matplotlib>=3.10.0,<4
+
+# 遥测数据分析
+pandas>=2.0.0,<3
+
+# FIA 官方文档 PDF 解析（升级件/PU 数据源）
+pdfplumber>=0.11.0,<1
+
+# livetiming 归档 TLS 指纹伪装（Cloudflare 指纹封禁规避）
+curl_cffi>=0.7.0,<1
+
+# 可选 Web 服务（评分表单/遥测页/ICS 日历；docker compose --profile web 使用）
+flask>=3.0.0,<4
+gunicorn>=21.0.0,<24

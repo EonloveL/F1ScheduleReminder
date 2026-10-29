@@ -1,0 +1,21 @@
+# 本地模型可选依赖（高配服务器用户）
+# 默认部署不需要本文件：记忆相关性用实体匹配，LLM 走远程 API。
+#
+# 适用场景：≥4GB 空闲内存 / 多核 CPU 的服务器，想用本地向量模型增强记忆召回。
+# 安装：pip install -r requirements-local.txt
+
+# 进程内轻量 embedding（ONNX 运行时，默认模型 BAAI/bge-small-zh-v1.5 约 100MB）
+# 启用：MEMORY_EMBEDDING=local（可选 LOCAL_EMBED_MODEL 换模型）
+fastembed>=4.0.0,<6
+
+# ---------------------------------------------------------------
+# 本地 LLM / 本地 embedding 服务（Ollama 等）不需要任何 Python 依赖：
+# 它们是 OpenAI 兼容的独立服务进程，机器人走 HTTP 调用：
+#   本地 LLM 对话:  LOCAL_LLM_BASE_URL=http://localhost:11434/v1
+#                   LOCAL_LLM_MODEL=qwen2.5:7b
+#                   （或运行时 /llm seturl local <url> + /llm setmodel local <模型>）
+#   本地 embedding: MEMORY_EMBEDDING=provider
+#                   EMBEDDING_BASE_URL=http://localhost:11434/v1
+#                   EMBEDDING_MODEL=bge-m3（Ollama 拉取同名模型即可）
+# Docker 容器访问宿主机服务：compose 加 extra_hosts: ["host.docker.internal:host-gateway"]
+# 并把 localhost 换成 host.docker.internal

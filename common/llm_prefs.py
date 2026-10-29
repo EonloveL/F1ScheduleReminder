@@ -2,8 +2,9 @@
 """LLM 分层模型偏好（管理员 /model 指令）+ 供应商可用模型清单缓存。
 
 prefs: data/llm_prefs.json — {"layers": {"l2": {"provider": "kimi", "model": "kimi-k2.6"}}}
-  层定义：l0=查询改写 l1=取数 l2=成文 deep=深度分析 vision=识图
-  默认（无配置）= 现状：l0/l1 deepseek，l2 kimi，deep kimi-k3，vision kimi-k2.6
+  层定义：l0=查询改写 l1=取数 l2=成文 deep=深度分析 vision=识图 memory=记忆总结
+  默认（无配置）= 现状：l0/l1 deepseek，l2 kimi，deep kimi-k3，vision kimi-k2.6，
+  memory=ask_order 首个非联网供应商
 models 缓存: data/llm_models_cache.json — {"kimi": {"models": [...], "fetched": ts}}
 两个文件都是运行时数据，已列入打包排除清单（勿覆盖生产端）。
 """
@@ -16,8 +17,9 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-LAYERS = ("l0", "l1", "l2", "deep", "vision")
-LAYER_NAMES_CN = {"l0": "查询改写", "l1": "取数", "l2": "成文", "deep": "深度分析", "vision": "识图"}
+LAYERS = ("l0", "l1", "l2", "deep", "vision", "memory")
+LAYER_NAMES_CN = {"l0": "查询改写", "l1": "取数", "l2": "成文", "deep": "深度分析",
+                  "vision": "识图", "memory": "记忆总结"}
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 _PREFS_PATH = os.path.join(_DATA_DIR, "llm_prefs.json")

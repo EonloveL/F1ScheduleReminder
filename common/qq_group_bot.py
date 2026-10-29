@@ -14,6 +14,9 @@ from typing import Optional, Dict, Any, List
 import requests
 import time
 
+from .standings_format import parse_driver_standings, parse_constructor_standings
+from .secret_guard import scrub_text
+
 logger = logging.getLogger(__name__)
 
 # 实时计时面板链接（默认复用 RATING_BASE_URL，可单独配置 LIVE_BASE_URL）
@@ -191,6 +194,7 @@ class QQGroupBot:
         Returns:
             发送是否成功
         """
+        content = scrub_text(content)  # 出网门禁：密钥脱敏
         try:
             # 确保有有效的token
             if not self._get_access_token():
@@ -669,6 +673,7 @@ Formula 1 🏎️💨"""
         Returns:
             发送是否成功
         """
+        content = scrub_text(content)  # 出网门禁：附带文字脱敏
         import random
 
         try:
@@ -741,6 +746,9 @@ Formula 1 🏎️💨"""
         Returns:
             发送是否成功
         """
+        markdown_content = scrub_text(markdown_content)  # 出网门禁：密钥脱敏
+        if fallback_text:
+            fallback_text = scrub_text(fallback_text)
         try:
             if not self._get_access_token():
                 logger.error("无法获取Access Token，发送失败")
@@ -789,21 +797,13 @@ Formula 1 🏎️💨"""
 
     @staticmethod
     def _parse_driver_standings(standings: Dict[str, Any]) -> list:
-        """解析Ergast格式车手积分榜"""
-        try:
-            lists = standings["MRData"]["StandingsTable"]["StandingsLists"]
-            return lists[0].get("DriverStandings", []) if lists else []
-        except (KeyError, IndexError, TypeError):
-            return []
+        """解析Ergast格式车手积分榜（实现已抽取到 common.standings_format，此处保留兼容别名）"""
+        return parse_driver_standings(standings)
 
     @staticmethod
     def _parse_constructor_standings(standings: Dict[str, Any]) -> list:
-        """解析Ergast格式车队积分榜"""
-        try:
-            lists = standings["MRData"]["StandingsTable"]["StandingsLists"]
-            return lists[0].get("ConstructorStandings", []) if lists else []
-        except (KeyError, IndexError, TypeError):
-            return []
+        """解析Ergast格式车队积分榜（实现已抽取到 common.standings_format，此处保留兼容别名）"""
+        return parse_constructor_standings(standings)
 
     def format_driver_standings(self, driver_entries: list, top_n: int = None) -> str:
         """格式化车手积分榜消息"""
@@ -1308,6 +1308,9 @@ Formula 1 🏎️💨"""
                         msg_seq: int = None) -> bool:
         """指定对象发送图片（群/私聊皆可，支持被动回复 msg_id 绑定省主动额度）。
 
+        修复 2026-10-09 事故：指令处理里直接调 send_image_url 群广播，
+        私聊发指令时图片串到群聊。
+
         Args:
             openid: 群 group_openid（is_dm=False）或用户 openid（is_dm=True）
             image_url: 图片公网 URL
@@ -1316,6 +1319,7 @@ Formula 1 🏎️💨"""
             msg_id/msg_seq: 被动回复绑定（可选，过期则主动发送）
         """
         import random
+        content = scrub_text(content)  # 出网门禁：附带文字脱敏
         scope = "users" if is_dm else "groups"
         try:
             if not self._get_access_token():
@@ -1367,6 +1371,7 @@ Formula 1 🏎️💨"""
             content: 消息内容
         """
         import random
+        content = scrub_text(content)  # 出网门禁：密钥脱敏
         try:
             if not self._get_access_token():
                 return False
@@ -1394,6 +1399,9 @@ Formula 1 🏎️💨"""
     def send_dm_markdown(self, user_openid: str, markdown_content: str, fallback_text: str = None) -> bool:
         """发送私聊Markdown卡片，失败降级纯文本"""
         import random
+        markdown_content = scrub_text(markdown_content)  # 出网门禁：密钥脱敏
+        if fallback_text:
+            fallback_text = scrub_text(fallback_text)
         try:
             if not self._get_access_token():
                 return False

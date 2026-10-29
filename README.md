@@ -2,6 +2,10 @@
 
 一个跑在 QQ 群里的 F1 助手机器人。基于 QQ 官方 Bot API V2，不用任何第三方框架协议，稳定合规。
 
+> 🌐 **Discord 版已上线**（海外用户）：全功能移植——定时推送、31 条斜杠指令、图表直传、`/ask` AI 问答、双语界面。见 [discord_version/README.md](discord_version/README.md)（English guide included）。
+>
+> **Discord version available** — scheduled pushes, 31 slash commands, charts, AI Q&A, bilingual UI. See [discord_version/README.md](discord_version/README.md).
+
 把它拉进群以后，它会：
 
 - **自动推送**：练习赛/排位/冲刺/正赛开始前提醒（含当地时间+北京时间双时区、赛道天气），正赛结束后推送完整成绩和最新积分榜，每天早晚推 F1 新闻速递
@@ -196,6 +200,7 @@ OpenF1 对未认证用户在**现场环节窗口**（比赛周末各环节进行
 
 ```
 ├── main.py              # 机器人主入口
+├── discord_version/     # Discord 版（海外用户，py-cord 斜杠指令，独立可部署）
 ├── common/              # 核心库（API 封装 / LLM 助手 / 工具层 / 调度 / 存储）
 │   └── prompts/         # LLM 提示词（外置可改）
 ├── web/                 # 评分网页 + 实时面板 + 车手头像/车队图标静态资源

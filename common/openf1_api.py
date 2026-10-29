@@ -26,7 +26,8 @@ class OpenF1API:
         self.session.headers.update({
             'User-Agent': 'F1-Reminder-Bot/1.0'
         })
-        # OAuth2 认证统一走 openf1_auth 共享提供器（1h 过期刷新 + 失败冷却 5min）
+        # OAuth2 认证统一走 openf1_auth 共享提供器（1h 过期刷新 + 失败冷却 5min；
+        # 2026-10-10 review 实证双实现漂移，统一收口）
         from .openf1_auth import get_openf1_auth
         self._auth = get_openf1_auth()
         self._auth_enabled = self._auth.enabled

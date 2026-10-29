@@ -191,13 +191,13 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
     tz = _tz('Asia/Shanghai')
 
     def _drv_standings(year=None):
-        from common.qq_group_bot import QQGroupBot
+        from common.standings_format import parse_driver_standings
         provisional = None
         if year and int(year) != season:
             s = f1_api.get_standings_for_year(int(year))
         else:
             s, provisional = f1_api.get_standings_with_projection(force_refresh=True)
-        entries = QQGroupBot._parse_driver_standings(s.get("drivers") or {})
+        entries = parse_driver_standings(s.get("drivers") or {})
         result = {"season": int(year) if year else season,
                   "standings": [{"pos": e.get("position"), "driver": e.get("Driver", {}).get("familyName"),
                                  "team": (e.get("Constructors") or [{}])[0].get("name"),
@@ -210,8 +210,11 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
             try:
                 import os as _os
                 from .chart_factory import render_points_trend_chart
-                p = render_points_trend_chart(season, f1_api=f1_api)
                 base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
+                if not base:
+                    p = None
+                else:
+                    p = render_points_trend_chart(season, f1_api=f1_api)
                 if p and base:
                     fname = _os.path.basename(p)
                     result["chart_md"] = f"![pic#800px #450px]({base}/exports/{fname})"
@@ -223,13 +226,13 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         return result
 
     def _ctr_standings(year=None):
-        from common.qq_group_bot import QQGroupBot
+        from common.standings_format import parse_constructor_standings
         provisional = None
         if year and int(year) != season:
             s = f1_api.get_standings_for_year(int(year))
         else:
             s, provisional = f1_api.get_standings_with_projection(force_refresh=True)
-        entries = QQGroupBot._parse_constructor_standings(s.get("constructors") or {})
+        entries = parse_constructor_standings(s.get("constructors") or {})
         result = {"season": int(year) if year else season,
                   "standings": [{"pos": e.get("position"), "team": e.get("Constructor", {}).get("name"),
                                  "points": e.get("points"), "wins": e.get("wins")} for e in entries]}
@@ -983,8 +986,11 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         try:
             import os as _os
             from .chart_factory import render_team_strength_radar
-            p = render_team_strength_radar(season, f1_api=f1_api, f1cosmos=f1cosmos)
             base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
+            if not base:
+                p = None
+            else:
+                p = render_team_strength_radar(season, f1_api=f1_api, f1cosmos=f1cosmos)
             if p and base:
                 result["chart_md"] = f"![pic#600px #540px]({base}/exports/{_os.path.basename(p)})"
                 result["note"] = ("chart_md 为车队实力雷达图（6维 min-max 归一化，外圈=更强），"

@@ -1,0 +1,39 @@
+services:
+  f1-discord-bot:
+    build:
+      context: ..
+      dockerfile: Dockerfile.discord
+    container_name: f1-discord-bot
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      # 运行时数据持久化（用户偏好/缓存/图表导出）；档案 json 由镜像种子自动补缺
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # 可选 Web 服务（评分表单/评分榜/遥测页/ICS 日历）：
+  #   docker compose --profile web up -d --build
+  # 然后用反代把 8080 暴露为 https 域名，并把该域名填入 .env 的 RATING_BASE_URL
+  # （配置后 Bot 自动启用 /rate /ratings /dotd /telemetry 与评分生命周期推送）
+  f1-discord-web:
+    profiles: ["web"]
+    build:
+      context: ..
+      dockerfile: Dockerfile.discord
+    container_name: f1-discord-web
+    command: ["gunicorn", "-w", "1", "--threads", "4", "--timeout", "120",
+              "-b", "0.0.0.0:8080", "--chdir", "/app/web", "rating_server:app"]
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8080:8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

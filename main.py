@@ -341,7 +341,9 @@ def _is_msg_id_expired(err) -> bool:
 
 
 async def reply_text(message, content: str):
-    """纯文本回复（自动分配msg_seq；msg_id过期自动降级主动推送）"""
+    """纯文本回复（自动分配msg_seq；msg_id过期自动降级主动推送；出站过 secret_guard 脱敏）"""
+    from common.secret_guard import scrub_text
+    content = scrub_text(content)
     try:
         await message.reply(content=content, msg_seq=_next_msg_seq(message.id))
     except Exception as e:
@@ -353,7 +355,9 @@ async def reply_text(message, content: str):
 
 
 async def reply_md(message, text: str, md: str):
-    """优先Markdown卡片回复，失败降级纯文本；msg_id过期降级主动推送"""
+    """优先Markdown卡片回复，失败降级纯文本；msg_id过期降级主动推送；出站过 secret_guard 脱敏"""
+    from common.secret_guard import scrub_text
+    text, md = scrub_text(text), scrub_text(md)
     try:
         await message.reply(msg_type=2, markdown={"content": md}, msg_seq=_next_msg_seq(message.id))
     except Exception as e:
@@ -462,9 +466,9 @@ def _get_driver_names_for_race(f1_api, race: dict) -> dict:
 COMMAND_NAMES = frozenset([
     "help", "drivers", "teams", "calendar", "next", "last", "gp",
     "watch", "weather", "setdriver", "setteam", "me", "unbind", "news", "rate", "ratings", "dotd",
-    "upgrades", "upgrade", "pu", "car", "clear", "live", "telemetry", "predict", "pace",
+    "upgrades", "upgrade", "pu", "car", "clear", "memory", "live", "telemetry", "predict", "pace",
     "racechart", "trend", "pitstops", "sc", "qualigap", "tr",
-    "kb", "bili_login", "models", "model",
+    "kb", "bili_login", "models", "model", "llm",
 ])
 
 
@@ -833,6 +837,13 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                     pass
                 is_correction = bool(ref_content) and any(p in question for p in CORRECTION_PATTERNS)
 
+            # "记住这个/请记住" 明示锚定：直接写入该用户 L3 长期记忆（不衰减）
+            if llm and any(p in question for p in ("记住", "记一下", "请记住", "别忘了")):
+                try:
+                    llm._memory.mark_anchor(member_openid, question, source="explicit", salience=3.0)
+                except Exception:
+                    pass
+
             await reply_text(message, "🔍 收到，正在联网查询…")
             ask_meta: dict = {}  # 工具调用声明回填
             from common.llm_assistant import new_qid
@@ -996,6 +1007,15 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                             _kb_factcheck_hook(cid, claim)
                     except Exception as ke:
                         logger.warning(f"纠错候选入队失败: {ke}")
+                    # 纠错同时写入用户锚定记忆（L3，不衰减）：该用户指出的错误要长期记住
+                    try:
+                        if llm:
+                            llm._memory.mark_anchor(
+                                member_openid,
+                                f"用户纠错：{question[:150]}（被纠正的回答要点: {answer[:100]}）",
+                                source="correction", salience=3.0)
+                    except Exception as _me:
+                        logger.debug(f"纠错锚定写入失败: {_me}")
             else:
                 _metric_incr("llm_answer_timeout" if timed_out else "llm_answer_fail")
                 # 区分供应商级故障（余额/模型下线/限流）与一般失败，方便管理员排查
@@ -1225,7 +1245,10 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         await reply_text(message, "🏎️ 我在！发送 /help 查看指令，或直接输入F1问题\n（发图提问请把图片和@我放在同一条消息里）")
                 return
 
-            logger.info(f"收到指令: {cmd} {arg} (from {member_openid})")
+            # /llm 参数可能含 API key：日志不落明文（此时 key 尚未注册进 secret_guard，
+            # 过滤器拦不住——从源头脱敏）
+            log_arg = "<redacted>" if cmd == "/llm" else arg
+            logger.info(f"收到指令: {cmd} {log_arg} (from {member_openid})")
             _metric_incr("command_total")
 
             try:
@@ -1860,22 +1883,66 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                                           content=f"📊 {race.get('raceName')} 正赛 Pace 分布统计图")
 
                 elif cmd == "/tr":
-                    # DIY F1转播风格 Team Radio 卡片（静态图，/tr 车手 引语）
-                    if not arg or " " not in arg.strip():
+                    # Team Radio 卡片：配置了 TR_STUDIO_URL（分离的高保真工作室服务）时
+                    # 服务端代生成（文本→工作室对话模式 PNG）发图，工作室不可达降级内置卡
+                    studio_url = os.getenv("TR_STUDIO_URL", "").strip().rstrip("/")
+                    parts = (arg or "").strip().split(None, 1)
+                    if studio_url and len(parts) < 2:
+                        await reply_text(message,
+                            "📻 Team Radio 工作室（完整版：语音驱动波形/入场动画/导出视频）\n"
+                            f"{studio_url}\n\n"
+                            "快速静态卡直接用: /tr 车手 引语（如 /tr 维斯塔潘 simply lovely）")
+                        return
+                    if len(parts) < 2:
                         await reply_text(message, "用法: /tr 车手 引语\n如: /tr 维斯塔潘 simply lovely\n/tr kimi check the car")
                         return
                     import asyncio as _aio
-                    loop = _aio.get_running_loop()
-                    dq, quote = arg.strip().split(" ", 1)
-                    from common.tr_card import render_tr_card
-                    path, err = await loop.run_in_executor(None, render_tr_card, dq, quote)
-                    if not path:
-                        await reply_text(message, f"⚠️ {err}")
-                        return
                     import os as _os
+                    loop = _aio.get_running_loop()
+                    dq, quote = parts
+                    from common.tr_card import render_tr_card, resolve_tr_driver
+                    path, err = None, ""
+                    fallback_note = ""
+                    if studio_url:
+                        resolved = await loop.run_in_executor(None, resolve_tr_driver, dq)
+                        if not resolved:
+                            await reply_text(message, f"⚠️ 未识别车手「{dq}」（支持中文名/英文名/别名，限 2026 现役）")
+                            return
+                        surname = resolved[0]
+                        def _studio_render():
+                            import hashlib as _hl
+                            import uuid as _uu
+                            import requests as _rq
+                            from common.ratings_store import EXPORTS_DIR as _EXP
+                            _os.makedirs(_EXP, exist_ok=True)
+                            r = _rq.post(f"{studio_url}/text",
+                                         data={"driver": surname, "text": quote},
+                                         headers={"X-TR-Token": os.getenv("TR_STUDIO_TOKEN", "")},
+                                         timeout=(10, 120),
+                                         proxies={"http": None, "https": None})
+                            if r.status_code != 200:
+                                raise RuntimeError(f"工作室 HTTP {r.status_code}")
+                            fname = f"tr_studio_v1_{surname}_{_hl.md5(quote.encode()).hexdigest()[:8]}.png"
+                            p = _os.path.join(_EXP, fname)
+                            # 并发同名竞态：tmp 名带 uuid（与 tr_card 同款事故范式）
+                            tmp = f"{p}.{os.getpid()}.{_uu.uuid4().hex[:6]}.tmp"
+                            with open(tmp, "wb") as f:
+                                f.write(r.content)
+                            _os.replace(tmp, p)
+                            return p
+                        try:
+                            path = await loop.run_in_executor(None, _studio_render)
+                        except Exception as _se:
+                            logger.warning(f"TR工作室渲染失败，降级内置卡: {_se}")
+                            fallback_note = "（工作室暂不可用，已用简化版）"
+                    if not path:
+                        path, err = await loop.run_in_executor(None, render_tr_card, dq, quote)
+                        if not path:
+                            await reply_text(message, f"⚠️ {err}")
+                            return
                     await reply_image(message,
                                       f"{RATING_BASE_URL}/exports/{_os.path.basename(path)}",
-                                      content=f"📻 {dq} 的 Team Radio 卡")
+                                      content=f"📻 {dq} 的 Team Radio 卡{fallback_note}")
 
                 elif cmd == "/car":
                     if not f1cosmos:
@@ -2334,10 +2401,27 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                             f"用法: /news on 开启 · /news off 关闭")
 
                 elif cmd == "/clear":
-                    if llm and llm.clear_context(member_openid):
-                        await reply_text(message, "🧹 已清空你的AI对话上下文，换个话题重新聊吧")
+                    n = llm.clear_context(member_openid) if llm else 0
+                    if n:
+                        await reply_text(message, f"🧹 本轮会话已归档为主题摘要（{n} 轮），核心内容仍会记得，闲聊细节已遗忘\n发送 /memory 查看你的记忆构成")
                     else:
                         await reply_text(message, "当前没有进行中的对话上下文")
+
+                elif cmd == "/memory":
+                    # 记忆自查（三层结构：工作记忆/主题摘要/长期锚定）
+                    if not llm:
+                        await reply_text(message, "💡 LLM 未启用")
+                        return
+                    sub = (arg or "").strip()
+                    if sub.lower().startswith("forget "):
+                        iid = sub[7:].strip()
+                        ok = llm._memory.forget(member_openid, iid)
+                        await reply_text(message, f"✅ 已删除 `{iid}`" if ok else f"❌ 未找到记忆条目 `{iid}`")
+                    else:
+                        desc = llm._memory.describe(member_openid)
+                        await reply_md(message,
+                                       desc.replace("**", "").replace("`", ""),
+                                       desc.replace("\n", "\r"))
 
                 elif cmd == "/models" or cmd == "/model":
                     # LLM 分层模型配置（管理员）：/models [refresh] 查看 · /model set <层> <供应商/模型> · /model reset [层]
@@ -2358,7 +2442,8 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         def _layer_defaults():
                             d_l1 = next((p for p in llm.ask_order if not llm.available[p]["web_search"]), None)
                             d_l2 = next((p for p in llm.ask_order if llm.available[p]["web_search"]), None)
-                            return {"l0": d_l1, "l1": d_l1, "l2": d_l2, "deep": d_l2, "vision": "kimi"}
+                            return {"l0": d_l1, "l1": d_l1, "l2": d_l2, "deep": d_l2,
+                                    "vision": "kimi", "memory": d_l1}
 
                         if cmd == "/models" or not a:
                             force = "refresh" in a
@@ -2384,7 +2469,7 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                         elif a.startswith("set "):
                             parts = a[4:].split()
                             if len(parts) != 2 or "/" not in parts[1]:
-                                await reply_text(message, "用法: /model set <层> <供应商/模型>\n层: l0/l1/l2/deep/vision，如 /model set l2 kimi/kimi-k3")
+                                await reply_text(message, "用法: /model set <层> <供应商/模型>\n层: l0/l1/l2/deep/vision/memory，如 /model set l2 kimi/kimi-k3")
                                 return
                             layer, pm = parts
                             prov, mdl = pm.split("/", 1)
@@ -2416,6 +2501,22 @@ def create_command_client(f1_api, prefs_store, llm=None, ratings_store=None, qq_
                             await reply_text(message, f"✅ 已重置{'层「' + layer + '」' if layer else '全部层'}为默认模型")
                         else:
                             await reply_text(message, "用法: /models [refresh] 查看 · /model set <层> <供应商/模型> · /model reset [层]")
+
+                elif cmd == "/llm":
+                    # LLM 运行时配置（管理员私聊专属）：切换服务商 / 配置 API Key / 模型 / base_url
+                    # 群内一律拒绝：密钥出现在群聊消息记录里即泄露面
+                    if not is_dm:
+                        await reply_text(message, "🔒 /llm 涉及密钥与服务商配置，仅限管理员私聊我操作（群内禁止使用）")
+                    elif not ADMIN_OPENIDS:
+                        await reply_text(message, "💡 未配置 ADMIN_OPENIDS")
+                    elif member_openid not in ADMIN_OPENIDS:
+                        await reply_text(message, "⛔ 该指令仅限管理员使用")
+                    elif not llm:
+                        await reply_text(message, "❌ LLM 助手初始化失败，请检查日志后重启")
+                    else:
+                        from common.llm_admin import handle_llm_admin
+                        reply = handle_llm_admin(llm, arg)
+                        await reply_md(message, reply.replace("**", ""), reply.replace("\n", "\r"))
 
                 elif cmd == "/bili_login":
                     # B站扫码登录（管理员）：解锁字幕/元数据接口（机房IP匿名访问可能被412风控）
@@ -2597,6 +2698,16 @@ def setup_logging():
         handlers=[console_handler, file_handler]
     )
 
+    # 出网门禁：注册已知 env 密钥 + 运行时密钥，日志通道挂脱敏过滤器
+    from common import secret_guard
+    secret_guard.auto_register_env()
+    try:
+        from common import llm_secrets
+        llm_secrets.register_all_to_guard()
+    except Exception:
+        pass
+    secret_guard.install_log_filter()
+
 
 # ==================== 主程序 ====================
 class F1ReminderApp:
@@ -2773,6 +2884,17 @@ class F1ReminderApp:
                     self.qq_bot.send_markdown_message(md, fallback_text=text)
             except Exception as e:
                 self.logger.warning(f"推送下一站卡片失败: {e}")
+
+        # 管理员指令速查卡 DM 推送（/llm /model /kb 等配置指令不在公开 /help 中）
+        if os.getenv("ADMIN_GUIDE_PUSH", "true").lower() == "true" and ADMIN_OPENIDS and self.qq_bot:
+            try:
+                from common.llm_admin import ADMIN_QUICKREF
+                for _admin in ADMIN_OPENIDS:
+                    self.qq_bot.send_dm_markdown(
+                        _admin, ADMIN_QUICKREF,
+                        fallback_text=ADMIN_QUICKREF.replace("**", "").replace("`", ""))
+            except Exception as e:
+                self.logger.warning(f"管理员速查卡推送失败: {e}")
         
         # 启动调度器
         try:

@@ -6,6 +6,25 @@
 
 ---
 
+## 2026-10-29 · Discord 版上线 + 三层衰减会话记忆 + 管理员运行时配置
+
+【新增】
+- **Discord 版本**（海外用户）：`discord_version/` 全功能机器人——定时推送（环节提醒/赛后成绩/积分榜/每周预告）、31 条斜杠指令（含图表直传，无需公网域名）、`/ask` AI 问答（可带图）、双语界面（BOT_LANGUAGE=en/zh）；根目录 `Dockerfile.discord` 一键构建，详见 discord_version/README.md
+- **三层衰减会话记忆**（`common/memory/`，两平台共有）：近期对话清晰、久远历史模糊、关键事实长期锚定——召回按"时间衰减 × 话题相关性 × 显著性"打分，与当前话题无关的历史不再污染回答；`/clear` 改为归档式清空（LLM 总结进长期记忆，1h 超时自动归档）；新增 `/memory` 自查与 `/memory forget <id>`；可选向量召回（MEMORY_EMBEDDING=provider 兼容远程与本地 Ollama，local=fastembed 需 ≥2GB 内存）
+- **管理员运行时配置**（私聊/DM 专属）：`/llm` 查看/切换 AI 服务商、配置 API Key/模型/自定义端点，热生效无需重启；`/model` 分层模型新增第 6 层 memory（记忆总结，可配便宜或本地模型省成本）
+- **本地大模型供应商**：Ollama/llama.cpp/vLLM 等 OpenAI 兼容端点（免 key，`LOCAL_LLM_MODEL` 或 `/llm setmodel local <模型>` 启用），高配服务器可完全离线化 AI 链路
+- **出网门禁**：所有出站消息与日志自动对注册的密钥脱敏；运行时密钥文件（data/llm_secrets.json）0o600 存储且永不进 git/镜像/部署包
+- 管理员速查卡：启动时自动 DM 管理员（ADMIN_GUIDE_PUSH 可关），完整手册见 docs/ADMIN_GUIDE.md
+
+【修复】
+- 代词追问（"那他队友呢"）不再因零实体交集丢失上文（会话指代词强制召回最近轮次；纯时间词不算指代）
+- 同话题反复讨论自动锚定时不再洪泛（强实体限定+指纹去重+分层驱逐，人工纠错锚点永不误删）
+
+【文档】
+- 项目结构新增 discord_version/ 说明；管理员手册 docs/ADMIN_GUIDE.md
+
+---
+
 ## 2026-10-27 · Team Radio 卡片 DIY + ICS 日历订阅
 
 【新增】

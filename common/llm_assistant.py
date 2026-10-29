@@ -117,13 +117,25 @@ PROVIDERS = {
         "default_model": "gemini-2.5-flash",
         "web_search": False,
     },
+    # 本地推理服务器（Ollama / llama.cpp / vLLM / LM Studio，OpenAI 兼容端点）
+    # 面向有高配服务器的用户：免 key（本地端点大多不验），模型必须显式配置
+    # 用法：LOCAL_LLM_MODEL=qwen2.5:7b（env）或 /llm setmodel local <模型>（运行时）
+    "local": {
+        "base_url_env": "LOCAL_LLM_BASE_URL",
+        "key_env": "LOCAL_LLM_API_KEY",
+        "model_env": "LOCAL_LLM_MODEL",
+        "default_base_url": "http://localhost:11434/v1/chat/completions",
+        "default_model": "",
+        "web_search": False,
+        "key_optional": True,
+    },
 }
 
 # 问答默认顺序：Kimi联网优先（F1知识需核实），DeepSeek兜底（可用 LLM_PROVIDER 环境变量覆盖）
-DEFAULT_ASK_ORDER = ["kimi", "deepseek", "openai_compat", "openrouter", "gemini"]
+DEFAULT_ASK_ORDER = ["kimi", "deepseek", "openai_compat", "openrouter", "gemini", "local"]
 
 # 翻译默认顺序：DeepSeek快速便宜优先（翻译无需联网搜索），Kimi兜底
-TRANSLATE_ORDER = ["deepseek", "kimi", "openai_compat", "openrouter", "gemini"]
+TRANSLATE_ORDER = ["deepseek", "kimi", "openai_compat", "openrouter", "gemini", "local"]
 
 
 class LLMAssistant:
@@ -180,48 +192,100 @@ class LLMAssistant:
         # LLM 遵守提示词不可靠，改代码兜底保证高 SC 声明必达）
         self._sc_notices: Dict[str, str] = {}
 
-        # 检测可用供应商（openai_compat 需 base_url+key+model 三 env 齐全）
-        self.available: Dict[str, Dict[str, Any]] = {}
+        # 检测可用供应商（env + 运行时覆盖 llm_secrets.json，后者优先）
+        self._providers_lock = _threading.Lock()
+        self._configure_providers()
+
+        # 三层会话记忆（common/memory，稀疏注意力式召回）
+        import threading
+        from .memory import MemoryFacade
+        self._memory = MemoryFacade(llm=self)
+        self._conv_lock = threading.Lock()
+        # 群内最近识图摘要：{group_openid: {user_id, question, answer, ts}}
+        self._group_vision: Dict[str, Dict[str, Any]] = {}
+
+    def _configure_providers(self):
+        """构建可用供应商表与问答顺序：env 为基础，运行时覆盖（管理员私聊配置）优先"""
+        from . import llm_secrets
+        overrides = llm_secrets.load_overrides()
+        rt_providers = overrides.get("providers") or {}
+
+        available: Dict[str, Dict[str, Any]] = {}
         for name, cfg in PROVIDERS.items():
-            api_key = os.getenv(cfg["key_env"], "")
-            base_url = cfg.get("base_url") or os.getenv(cfg.get("base_url_env", ""), "")
+            rt = rt_providers.get(name) or {}
+            api_key = (rt.get("api_key") or "").strip() or os.getenv(cfg["key_env"], "")
+            base_url = ((rt.get("base_url") or "").strip()
+                        or cfg.get("base_url") or os.getenv(cfg.get("base_url_env", ""), "")
+                        or cfg.get("default_base_url", ""))
+            # key_optional（本地推理端点）：key 可空，用占位值过鉴权头
+            if not api_key and cfg.get("key_optional"):
+                api_key = "local-no-key"
             if api_key and base_url:
-                model = os.getenv(cfg["model_env"], "") or cfg["default_model"]
+                model = ((rt.get("model") or "").strip()
+                         or os.getenv(cfg["model_env"], "") or cfg["default_model"])
                 if not model:
-                    logger.warning(f"LLM供应商 {name} 缺模型配置（{cfg['model_env']}），跳过")
+                    # local 无任何显式配置时静默跳过（避免每次启动刷告警）；
+                    # 用户显式配了 base_url/key 却缺模型才告警
+                    if rt or os.getenv(cfg["key_env"], "") or os.getenv(cfg.get("base_url_env", ""), ""):
+                        logger.warning(f"LLM供应商 {name} 缺模型配置（{cfg['model_env']}），跳过")
                     continue
-                self.available[name] = {
+                available[name] = {
                     "api_key": api_key,
                     "base_url": base_url,
                     "model": model,
                     "web_search": cfg["web_search"],
                 }
-                logger.info(f"✓ LLM供应商可用: {name} (模型: {model}, 联网: {cfg['web_search']})")
+                src = "运行时配置" if rt else "env"
+                logger.info(f"✓ LLM供应商可用: {name} (模型: {model}, 联网: {cfg['web_search']}, 来源: {src})")
 
-        # 问答供应商顺序
-        preferred = os.getenv("LLM_PROVIDER", "").strip().lower()
+        # 问答供应商顺序：运行时 preferred > env LLM_PROVIDER > 默认
         order = list(DEFAULT_ASK_ORDER)
-        if preferred in PROVIDERS:
-            order.remove(preferred)
-            order.insert(0, preferred)
-        self.ask_order = [n for n in order if n in self.available]
+        for preferred in (overrides.get("preferred_provider"),
+                          os.getenv("LLM_PROVIDER", "").strip().lower()):
+            if preferred in PROVIDERS and preferred in order:
+                order.remove(preferred)
+                order.insert(0, preferred)
+                break  # 运行时配置已表达最新管理意图，命中即不再看 env
 
-        self.enabled = bool(self.available)
+        with self._providers_lock:
+            self.available = available
+            self.ask_order = [n for n in order if n in available]
+            self.enabled = bool(available)
+
         if self.enabled:
-            logger.info(f"✓ LLM助手初始化成功，问答顺序: {' -> '.join(self.ask_order) or '无'}")
-            if "kimi" not in self.available:
+            logger.info(f"✓ LLM供应商配置就绪，问答顺序: {' -> '.join(self.ask_order) or '无'}")
+            if "kimi" not in available:
                 logger.warning("⚠️ 未配置MOONSHOT_API_KEY，联网核查功能（圈速纪录）已禁用")
         else:
             logger.warning("⚠️ 未配置任何LLM API Key，LLM功能已禁用")
 
-        # 多轮会话记忆：JSON持久化（data/llm_memory.json），容器重启不丢
-        # 窗口语义不变：每用户最近6轮、30分钟无交互过期
-        import threading
-        from .llm_memory_store import LLMMemoryStore
-        self._memory = LLMMemoryStore()
-        self._conv_lock = threading.Lock()
-        # 群内最近识图摘要：{group_openid: {user_id, question, answer, ts}}
-        self._group_vision: Dict[str, Dict[str, Any]] = {}
+    def reload_runtime(self) -> bool:
+        """管理员运行时配置变更后热重载（无需重启进程）。返回重载后是否可用"""
+        self._configure_providers()
+        return self.enabled
+
+    def provider_status(self) -> list:
+        """对外展示用供应商状态（key 一律脱敏，绝不返回明文）"""
+        from . import llm_secrets
+        from .secret_guard import mask_secret
+        rt = llm_secrets.load_overrides()
+        out = []
+        for name, cfg in PROVIDERS.items():
+            entry = rt.get("providers", {}).get(name) or {}
+            env_key = os.getenv(cfg["key_env"], "")
+            rt_key = (entry.get("api_key") or "").strip()
+            key_src = "runtime" if rt_key else ("env" if env_key else "")
+            info = self.available.get(name)
+            out.append({
+                "name": name,
+                "active": bool(info),
+                "model": (info or {}).get("model") or (entry.get("model") or cfg["default_model"] or "-"),
+                "web_search": cfg["web_search"],
+                "key_masked": mask_secret(rt_key or env_key) if (rt_key or env_key) else "",
+                "key_source": key_src,
+                "in_order": name in self.ask_order,
+            })
+        return out
 
     @staticmethod
     def _strip_tool_markup(text: str) -> str:
@@ -310,7 +374,12 @@ class LLMAssistant:
         Returns:
             最终回答文本，失败返回None
         """
-        cfg = self.available[provider]
+        cfg = self.available.get(provider)
+        if not cfg:
+            # reload_runtime（管理员 /llm delkey/reset）恰好在这轮问答中途移除了该供应商：
+            # 判空跳过而非 KeyError 假故障（review M2）
+            logger.warning(f"供应商[{provider}]运行时已移除，本次调用跳过")
+            return None
         timeout = timeout or self.timeout
         # connect/read 拆分：连接挂死 10s 内快速失败，read 按层预算（避免 120s 才发现网络故障）
         req_timeout = (int(os.getenv("LLM_CONNECT_TIMEOUT", "10")), timeout)
@@ -712,7 +781,10 @@ class LLMAssistant:
         except Exception:
             pass
 
-        history = self._get_history(user_id)
+        mem_ctx = self._get_memory_context(user_id, question)
+        if mem_ctx.get("memory_block"):
+            system += "\n\n" + mem_ctx["memory_block"]
+        history = mem_ctx["history"]
         messages = ([{"role": "system", "content": system}]
                     + history
                     + [{"role": "user", "content": question}])
@@ -728,7 +800,7 @@ class LLMAssistant:
             # 无内建联网的供应商（DeepSeek）：若配置了客户端搜索（Tavily/博查），
             # 注入普通 function 形态的 web_search 工具，由客户端执行搜索回填
             p_tools, p_handlers = fn_tools, fn_handlers
-            if not self.available[provider]["web_search"]:
+            if not (self.available.get(provider) or {}).get("web_search", False):  # 热重载判空
                 from .web_search import WEB_SEARCH_TOOL, web_search_handler, get_web_searcher
                 if get_web_searcher().enabled and fn_tools is not None:
                     if not any((t.get("function") or {}).get("name") == "web_search" for t in fn_tools):
@@ -781,22 +853,56 @@ class LLMAssistant:
         logger.error("所有LLM供应商均无响应")
         return None
 
-    # ==================== 多轮上下文记忆（按用户区分，JSON持久化） ====================
+    # ==================== 多轮上下文记忆（稀疏注意力式三层记忆） ====================
+    # 设计见 common/memory/__init__.py：L1 工作记忆（半衰期1h）/ L2 主题摘要（3天）/
+    # L3 锚定（不衰减）；score=衰减×相关性×显著性，零实体交集不召回（防无关历史污染）
 
-    # 窗口语义常量保留在本类便于外部引用，实际实现见 llm_memory_store
-    from .llm_memory_store import MAX_TURNS, SESSION_TTL
+    def _get_memory_context(self, user_id: str, question: str) -> Dict[str, Any]:
+        """召回记忆上下文：{"history": [消息列表], "memory_block": str|None}"""
+        try:
+            return self._memory.build_context(user_id, question)
+        except Exception as e:
+            logger.warning(f"记忆召回失败（降级无记忆）: {e}")
+            return {"history": [], "memory_block": None}
 
-    def _get_history(self, user_id: str) -> List[Dict[str, str]]:
-        """取该用户的会话历史（过期自动清空）"""
-        return self._memory.get_turns(user_id)
+    def _get_history(self, user_id: str, question: str = "") -> List[Dict[str, str]]:
+        """兼容接口：仅返回 L1 筛中轮次的消息列表（L0 改写/识图等只需原文历史处用）"""
+        return self._get_memory_context(user_id, question)["history"]
 
     def _append_turn(self, user_id: str, question: str, answer: str):
-        """把一轮问答追加到该用户会话并落盘"""
-        self._memory.append_turn(user_id, question, answer)
+        """把一轮问答写入 L1 工作记忆（实体抽取/显著性加权/溢出压缩由 facade 负责）"""
+        try:
+            self._memory.append_turn(user_id, question, answer)
+        except Exception as e:
+            logger.warning(f"记忆写入失败: {e}")
 
-    def clear_context(self, user_id: str) -> bool:
-        """清空该用户会话上下文，返回是否清掉了已有会话"""
-        return self._memory.clear(user_id)
+    def clear_context(self, user_id: str):
+        """归档式清空：工作记忆 → LLM 总结 → L2 主题摘要。返回归档轮数（0=无内容）"""
+        try:
+            return self._memory.archive_and_clear(user_id, reason="clear")
+        except Exception as e:
+            logger.warning(f"归档式清空失败: {e}")
+            return 0
+
+    def chat_for_layer(self, layer: str, system: str, user: str, timeout: int = 45) -> Optional[str]:
+        """按分层偏好调用指定供应商/模型（/model set <层> 配置），缺省=ask_order 首个非联网。
+        供记忆归档总结等内部功能使用；失败返回 None（调用方有兜底）"""
+        if not self.enabled or not self.ask_order:
+            return None
+        default = next((p for p in self.ask_order if not (self.available.get(p) or {}).get("web_search", False)),
+                       self.ask_order[0])
+        provider, model = self._resolve_layer(layer, default)
+        if provider not in self.available:
+            return None
+        try:
+            return self._chat_once(provider,
+                                   [{"role": "system", "content": system},
+                                    {"role": "user", "content": user}],
+                                   temperature=0.2, timeout=timeout,
+                                   enable_search=False, model=model)
+        except Exception as e:
+            logger.warning(f"chat_for_layer[{layer}→{provider}] 失败: {e}")
+            return None
 
     # ==================== 群内识图摘要共享 ====================
     # 场景：群友A发图识别后，群友B追问"这张图里排位赛几点"。
@@ -904,7 +1010,7 @@ class LLMAssistant:
             now_cn = datetime.now(timezone(timedelta(hours=8)))
             system = (self._REWRITE_SYSTEM
                       + f"\n\n当前时间: {now_cn.strftime('%Y年%m月%d日 %H:%M')} (北京时间)")
-            history = self._get_history(user_id)
+            history = self._get_history(user_id, question)
             messages = ([{"role": "system", "content": system}]
                         + history[-6:]
                         + [{"role": "user", "content": question}])
@@ -950,7 +1056,9 @@ class LLMAssistant:
             cached = get_models_cache(provider)
             if cached:
                 return cached
-        cfg = self.available[provider]
+        cfg = self.available.get(provider)  # 热重载判空：供应商运行时被移除则清单不可用
+        if not cfg:
+            return None
         base = cfg["base_url"]
         models_url = base.replace("/chat/completions", "/models")
         if models_url == base:
@@ -1053,7 +1161,9 @@ class LLMAssistant:
         - response_format json_object 不支持（400 且报错含 response_format）→ 去掉重试并记忆
           （JSON 契约由提示词+校验重试兜底）
         循环结构：每次重试后重新提取报错文本，兼容两种特性都不支持的链式 400"""
-        cfg = self.available[provider]
+        cfg = self.available.get(provider)  # 热重载判空
+        if not cfg:
+            return None
         eff_model = payload.get("model") or cfg["model"]
         if eff_model in self._no_temp_models:
             payload.pop("temperature", None)
@@ -1093,7 +1203,9 @@ class LLMAssistant:
         {"calls": [{"name": ..., "args": {...}}], "web_search": ["检索词", ...]}，
         calls 为空即取数结束。JSON 解析/校验失败引导重试一次，仍失败返回 (None, None)。
         """
-        cfg = self.available[provider]
+        cfg = self.available.get(provider)  # 热重载判空
+        if not cfg:
+            return None, None
         headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
         req_timeout = (int(os.getenv("LLM_CONNECT_TIMEOUT", "10")),
                        int(os.getenv("LLM_L1_TIMEOUT", "60")))
@@ -1218,7 +1330,9 @@ class LLMAssistant:
         Returns:
             (collected: [(tool_name, result_str)], search_queries: [str])，失败返回 (None, None)
         """
-        cfg = self.available[provider]
+        cfg = self.available.get(provider)  # 热重载判空
+        if not cfg:
+            return None, None
         headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
         # L1 是轻量决策层（不联网、输出短），读超时收紧到 LLM_L1_TIMEOUT（默认60s）
         req_timeout = (int(os.getenv("LLM_CONNECT_TIMEOUT", "10")),
@@ -1385,11 +1499,16 @@ class LLMAssistant:
         def _cancelled() -> bool:
             return cancel_event is not None and cancel_event.is_set()
 
-        l1_provider = next((p for p in self.ask_order if not self.available[p]["web_search"]), None)
-        l2_provider = next((p for p in self.ask_order if self.available[p]["web_search"]), None)
+        with self._providers_lock:
+            _ask_order = list(self.ask_order)
+            _available = dict(self.available)  # 快照防 reload_runtime 中途撕裂（review M2）
+        l1_provider = next((p for p in _ask_order if not _available[p]["web_search"]), None)
+        l2_provider = next((p for p in _ask_order if _available[p]["web_search"]), None)
         # 管理员分层偏好覆盖（默认 None 不影响现状）
         l1_provider, l1_model = self._resolve_layer("l1", l1_provider)
         l2_provider, l2_pref_model = self._resolve_layer("l2", l2_provider)
+        # L0 改写层独立可配（缺省回退 L1 供应商）；此前 /model set l0 是死配置（review M1）
+        l0_provider, l0_model = self._resolve_layer("l0", l1_provider)
         if not l1_provider or not l2_provider:
             return self.ask_with_tools(user_id, question, fn_tools, fn_handlers, max_len, data_context,
                                        meta_out=meta_out, cancel_event=cancel_event,
@@ -1401,10 +1520,10 @@ class LLMAssistant:
         _REF_HINTS = ("他", "她", "它", "他们", "那场", "这支", "那个", "这位", "此人",
                       "昨天", "今天", "明天", "刚才", "上周", "下周", "上一场",
                       "下一站", "最近一场", "刚刚", "前年", "去年", "今年")
-        if not self._get_history(user_id) and not any(h in question for h in _REF_HINTS):
+        if not self._memory.has_active_session(user_id) and not any(h in question for h in _REF_HINTS):
             standalone = question
         else:
-            standalone = self._rewrite_query(l1_provider, user_id, question, model=l1_model)
+            standalone = self._rewrite_query(l0_provider, user_id, question, model=l0_model)
 
         if _cancelled():
             return None
@@ -1519,14 +1638,17 @@ class LLMAssistant:
 
         user_msg = standalone
         if search_queries:
-            if self.available[l2_provider]["web_search"]:
+            if (self.available.get(l2_provider) or {}).get("web_search", False):  # 热重载判空
                 user_msg += "\n\n（请联网检索以下方面补充回答: " + "; ".join(search_queries) + "）"
             else:
                 # L2 被管理员切到无联网供应商（/model set l2 ...）：注入联网指令
                 # 只会诱发"假装联网"幻觉，改为记日志让模型基于已注入数据回答
                 logger.warning(f"L2 供应商 {l2_provider} 无联网能力，忽略 {len(search_queries)} 条检索需求")
 
-        history = self._get_history(user_id)
+        mem_ctx = self._get_memory_context(user_id, standalone)
+        if mem_ctx.get("memory_block"):
+            system += "\n\n" + mem_ctx["memory_block"]
+        history = mem_ctx["history"]
         messages = ([{"role": "system", "content": system}]
                     + history
                     + [{"role": "user", "content": user_msg}])
@@ -1624,14 +1746,17 @@ class LLMAssistant:
         if not urls:
             return None
 
-        cfg = self.available[v_provider]
+        cfg = self.available.get(v_provider)  # 热重载判空
+        if not cfg:
+            logger.warning(f"识图供应商[{v_provider}]运行时已移除")
+            return None
         vision_model = v_model or os.getenv("LLM_VISION_MODEL", "kimi-k2.6")
         content = [{"type": "text", "text": question}]
         for u in urls:
             content.append({"type": "image_url",
                             "image_url": {"url": self._image_to_data_url(u) or u}})
 
-        history = self._get_history(user_id)[-4:] if user_id else []
+        history = self._get_history(user_id, question)[-4:] if user_id else []
         payload = {
             "model": vision_model,
             "messages": ([{"role": "system", "content": self.VISION_SYSTEM}]
@@ -1690,7 +1815,10 @@ class LLMAssistant:
                 + data_context
             )
 
-        history = self._get_history(user_id)
+        mem_ctx = self._get_memory_context(user_id, question)
+        if mem_ctx.get("memory_block"):
+            system += "\n\n" + mem_ctx["memory_block"]
+        history = mem_ctx["history"]
         messages = ([{"role": "system", "content": system}]
                     + history
                     + [{"role": "user", "content": question}])

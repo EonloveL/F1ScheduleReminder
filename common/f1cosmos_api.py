@@ -240,13 +240,13 @@ class F1CosmosAPI:
             if cached is not None:
                 return cached
         records = self._scrape_destructors_page(season)
-        if self.cache and (records or records == []):
+        if self.cache:
             self.cache.save(cache_key, records, ttl_hours=24 if records else 1)
         return records
 
     @staticmethod
     def _scrape_destructors_page(season: int) -> List[Dict[str, Any]]:
-        """从 destructors 页面的 RSC 流中提取事故成本明细数组（反转义 + 括号平衡）"""
+        """从 destructors 页面的 RSC 流中提取事故成本明细数组（反转义 + raw_decode）"""
         try:
             resp = requests.get(f"{SITE_URL}/dashboard/destructors",
                                 params={"year": season},
@@ -286,7 +286,7 @@ class F1CosmosAPI:
             logger.warning("[F1Cosmos] destructors RSC 中未找到明细数组（页面结构可能变更）")
             return []
         # 用 JSONDecoder.raw_decode 原生解析（正确处理字符串值内的括号/转义），
-        # 替代手写括号平衡（字符串含 [ ] 会错位）
+        # 替代手写括号平衡（字符串含 [ ] 会错位——2026-10-09 review 实证风险）
         try:
             arr, _ = json.JSONDecoder().raw_decode(rsc, i)
         except ValueError as e:

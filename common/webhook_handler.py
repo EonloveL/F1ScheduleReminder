@@ -195,6 +195,20 @@ def register_webhook(app: Flask, webhook_secret: str, command_client, qq_bot=Non
     # 签名时间戳容差：防重放（超出窗口的事件即使签名合法也拒绝）
     _SIG_TS_TOLERANCE = 300
 
+    @app.route("/health", methods=["GET"])
+    def _health():
+        """主 bot 健康检查（评分/实时面板服务已有 /health，bot 进程补齐）"""
+        from .metrics import snapshot
+        counters, uptime = snapshot()
+        return jsonify({"status": "ok", "uptime_seconds": uptime, "metrics": counters})
+
+    @app.route("/metrics", methods=["GET"])
+    def _metrics():
+        """纯文本指标（指令总量/失败、LLM 成败、API 全挂等关键计数）"""
+        from .metrics import render_text
+        return render_text(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
     def _is_duplicate(event_id: str) -> bool:
         if not event_id:
             return False
@@ -225,7 +239,7 @@ def register_webhook(app: Flask, webhook_secret: str, command_client, qq_bot=Non
             elif event_type == "C2C_MESSAGE_CREATE":
                 from botpy.message import C2CMessage
                 msg = C2CMessage(api=api, event_id=event_id, data=event_data)
-                if author_id:
+                if author_id:  # 空值守卫：缺 id 不补丁（空串会让下游身份解析静默失效）
                     msg.author.member_openid = author_id
                 loop.run_until_complete(_command_client.on_group_at_message_create(msg))
 

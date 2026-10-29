@@ -1,0 +1,41 @@
+# Dockerfile.discord 构建上下文忽略（BuildKit 命名约定）
+# 注意：不排除 discord_version/（本文件服务于 Discord 版构建）
+
+.git
+.idea
+.vscode
+**/__pycache__
+*.pyc
+*.zip
+*.log
+.env
+**/.env
+venv
+.venv
+
+# 运行时数据不进镜像（data 下仅档案 json 作为种子）
+data/*
+!data/drivers_profile.json
+!data/pu_limits.json
+!data/circuits_data.json
+!data/prediction_model.json
+!data/prediction_dataset_*.json
+
+# QQ 版部署与文档目录
+deploy
+docs
+analysis
+README.md
+CHANGELOG.md
+LICENSE
+get_group_openid.py
+main.py
+requirements.txt
+
+# web 仅保留静态资源与可选 Web 服务文件
+web/*
+!web/static
+!web/__init__.py
+!web/rating_server.py
+!web/telemetry.html
+!web/telemetry_overlay.html

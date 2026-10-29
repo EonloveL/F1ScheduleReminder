@@ -1043,9 +1043,9 @@ class ReminderScheduler:
 
     def _send_dm_personalized_standings(self, standings: Dict[str, Any], dm_users: Dict[str, Dict[str, Any]]):
         """私聊推送：每位设置偏好的用户收到自己关注的车手/车队最新排名"""
-        from .qq_group_bot import QQGroupBot
-        d_entries = QQGroupBot._parse_driver_standings(standings.get("drivers") or {})
-        t_entries = QQGroupBot._parse_constructor_standings(standings.get("constructors") or {})
+        from .standings_format import parse_driver_standings, parse_constructor_standings
+        d_entries = parse_driver_standings(standings.get("drivers") or {})
+        t_entries = parse_constructor_standings(standings.get("constructors") or {})
         d_map = {e.get("Driver", {}).get("driverId"): e for e in d_entries}
         t_map = {e.get("Constructor", {}).get("constructorId"): e for e in t_entries}
 

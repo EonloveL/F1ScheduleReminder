@@ -1,0 +1,27 @@
+# Discord 版镜像（海外开源用户；构建上下文=仓库根目录，配合同名 .dockerignore）
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# CJK fonts for matplotlib chart rendering
+# 国内构建可加速：sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY discord_version/requirements.txt /app/discord_version/requirements.txt
+# 国内构建可加速：-i https://mirrors.aliyun.com/pypi/simple/
+RUN pip install --no-cache-dir -r /app/discord_version/requirements.txt
+
+COPY common /app/common
+# 数据档案作为种子打入镜像，容器启动时补缺到 /app/data（volume 挂载点）
+COPY data /app/data_seed
+COPY web/static /app/web/static
+COPY web/rating_server.py /app/web/rating_server.py
+COPY web/__init__.py /app/web/__init__.py
+COPY web/telemetry.html /app/web/telemetry.html
+COPY web/telemetry_overlay.html /app/web/telemetry_overlay.html
+COPY discord_version /app/discord_version
+
+WORKDIR /app/discord_version
+
+CMD ["python", "-u", "main.py"]
