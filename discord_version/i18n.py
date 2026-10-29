@@ -87,6 +87,22 @@ _STRINGS = {
         "weather_title": "🌤️ {race} 天气",
         "weather_current": "🌡️ 当前",
         "weather_note": "沥青温度为模型估算/代理值时以实际为准",
+        # 时区与本地化
+        "next_title": "下一站：{race}",
+        "calendar_title": "F1 全年赛历",
+        "calendar_legend": "⚡冲刺赛周末 · ✅已结束 · 🔜未开始 · 时间按你的设备本地时区显示",
+        "gp_summary_hint": "完整成绩: `/gp <地点> [年份] [环节]`，如 `/gp monza 2022 race`",
+        "tz_set": "✅ 你的时区已设置为 **{tz}**\n消息里的时间戳本就会按你的设备时区显示；此设置用于 AI 问答中的时间换算",
+        "tz_invalid": "❌ 无效时区 `{tz}`。请用 IANA 时区名，如 `Europe/London`、`America/New_York`、`Asia/Tokyo`",
+        "tz_current": "🌍 你当前设置的时区：**{tz}**",
+        "tz_unset": "🌍 未设置时区（消息时间戳始终按你的设备时区显示；设置后 AI 问答会按它换算时间）",
+        "wx_air": "气温{lo}-{hi}°C",
+        "wx_track_measured": "沥青实测{lo}-{hi}°C",
+        "wx_track_est": "沥青约{lo}-{hi}°C",
+        "wx_track_proxy": "地面约{lo}-{hi}°C",
+        "wx_rain": "降水{p}%",
+        "wx_rain_eta": "（开始后约{m}分钟）",
+        "wx_wind": "风 {wd} {lo}-{hi}km/h",
         # 偏好
         "pref_driver_set": "✅ 已添加关注车手：**{name}**",
         "pref_team_set": "✅ 已添加关注车队：**{name}**",
@@ -119,7 +135,7 @@ _STRINGS = {
             "**AI**\n"
             "`/ask` 提问（联网+数据工具） · `/predict` 名次预测 · `/clear` 清空对话\n"
             "**个人**\n"
-            "`/setdriver` `/setteam` 关注 · `/me` 我的偏好 · `/unbind` 解绑 · `/news` 新闻开关\n"
+            "`/setdriver` `/setteam` 关注 · `/me` 我的偏好 · `/unbind` 解绑 · `/news` 新闻开关 · `/tz` 时区\n"
             "**管理员**\n"
             "私聊机器人发送 `/llm` 查看配置指令（切换 AI 服务商/密钥）"
         ),
@@ -172,6 +188,21 @@ _STRINGS = {
         "weather_title": "🌤️ {race} Weather",
         "weather_current": "🌡️ Now",
         "weather_note": "Track temp is a model estimate/proxy unless measured",
+        "next_title": "Next Race: {race}",
+        "calendar_title": "F1 Season Calendar",
+        "calendar_legend": "⚡Sprint weekend · ✅Finished · 🔜Upcoming · Times shown in your device's local timezone",
+        "gp_summary_hint": "Full results: `/gp <place> [year] [session]`, e.g. `/gp monza 2022 race`",
+        "tz_set": "✅ Your timezone is set to **{tz}**\nMessage timestamps already render in your device timezone; this setting is used for time conversion in AI answers",
+        "tz_invalid": "❌ Invalid timezone `{tz}`. Use an IANA name like `Europe/London`, `America/New_York`, `Asia/Tokyo`",
+        "tz_current": "🌍 Your timezone: **{tz}**",
+        "tz_unset": "🌍 No timezone set (message timestamps always render in your device timezone; set one so AI answers convert times for you)",
+        "wx_air": "Air {lo}-{hi}°C",
+        "wx_track_measured": "Track {lo}-{hi}°C (measured)",
+        "wx_track_est": "Track ~{lo}-{hi}°C",
+        "wx_track_proxy": "Ground ~{lo}-{hi}°C",
+        "wx_rain": "Rain {p}%",
+        "wx_rain_eta": " (~{m}min after start)",
+        "wx_wind": "Wind {wd} {lo}-{hi}km/h",
         "pref_driver_set": "✅ Now following driver: **{name}**",
         "pref_team_set": "✅ Now following team: **{name}**",
         "pref_not_found": "❌ {kind} not found: {query}",
@@ -201,7 +232,7 @@ _STRINGS = {
             "**AI**\n"
             "`/ask` ask anything (web + data tools) · `/predict` race prediction · `/clear` reset context\n"
             "**You**\n"
-            "`/setdriver` `/setteam` follow · `/me` my prefs · `/unbind` unbind · `/news` news toggle\n"
+            "`/setdriver` `/setteam` follow · `/me` my prefs · `/unbind` unbind · `/news` news toggle · `/tz` timezone\n"
             "**Admin**\n"
             "DM the bot `/llm` for config commands (AI provider/keys)"
         ),

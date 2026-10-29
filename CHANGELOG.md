@@ -9,6 +9,7 @@
 ## 2026-10-29 · Discord 版上线 + 三层衰减会话记忆 + 管理员运行时配置
 
 【新增】
+- **Discord 版本地化**：消息内时间全部改用 Discord 原生时间戳——按每个用户设备的时区/语言自动渲染（多时区服务器零配置）；`/tz` 设置个人时区供 AI 问答换算环节时间；/next /calendar /weather /gp 四个指令改用原生格式（不再硬编码北京时间）
 - **Discord 版本**（海外用户）：`discord_version/` 全功能机器人——定时推送（环节提醒/赛后成绩/积分榜/每周预告）、31 条斜杠指令（含图表直传，无需公网域名）、`/ask` AI 问答（可带图）、双语界面（BOT_LANGUAGE=en/zh）；根目录 `Dockerfile.discord` 一键构建，详见 discord_version/README.md
 - **三层衰减会话记忆**（`common/memory/`，两平台共有）：近期对话清晰、久远历史模糊、关键事实长期锚定——召回按"时间衰减 × 话题相关性 × 显著性"打分，与当前话题无关的历史不再污染回答；`/clear` 改为归档式清空（LLM 总结进长期记忆，1h 超时自动归档）；新增 `/memory` 自查与 `/memory forget <id>`；可选向量召回（MEMORY_EMBEDDING=provider 兼容远程与本地 Ollama，local=fastembed 需 ≥2GB 内存）
 - **管理员运行时配置**（私聊/DM 专属）：`/llm` 查看/切换 AI 服务商、配置 API Key/模型/自定义端点，热生效无需重启；`/model` 分层模型新增第 6 层 memory（记忆总结，可配便宜或本地模型省成本）

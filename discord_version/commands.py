@@ -27,9 +27,11 @@ import discord
 try:
     from bot import DiscordBot, split_text
     from i18n import T, LANG
+    import formatting as fmt
 except ImportError:  # 包形态（discord_version.commands）运行时的回退
     from discord_version.bot import DiscordBot, split_text
     from discord_version.i18n import T, LANG
+    from discord_version import formatting as fmt
 
 from common.f1_api import find_race_by_circuit
 from common.f1_tools import parse_race_query, parse_upgrade_query, find_race_for_query
@@ -363,8 +365,8 @@ def register_commands(bot, cc: CommandContext):
                     f"未找到「{place}」对应的分站" if place else "本赛季已无剩余比赛",
                     f"No race matching '{place}'" if place else "No races left this season"))
                 return
-            text, md = QQGroupBot.format_next_race(race, sessions)
-            await _reply_qq_md(ictx, md, fallback_text=text)
+            # Discord 原生格式化：<t:> 时间戳按每个用户设备时区渲染（不再硬编码北京时间）
+            await _reply_text(ictx, fmt.fmt_next_race(race, sessions))
         except Exception:
             logger.exception("/next 失败")
             await _reply_error(ictx)
@@ -430,8 +432,7 @@ def register_commands(bot, cc: CommandContext):
             if not schedule:
                 await _reply_text(ictx, T("no_data"))
                 return
-            text, md = QQGroupBot.format_calendar(schedule)
-            await _reply_qq_md(ictx, md, fallback_text=text)
+            await _reply_text(ictx, fmt.fmt_calendar(schedule))
         except Exception:
             logger.exception("/calendar 失败")
             await _reply_error(ictx)
@@ -571,8 +572,7 @@ def register_commands(bot, cc: CommandContext):
                 return ordered
 
             session_results = await _run(cc, _fetch_gp_summary)
-            text, md = QQGroupBot.format_gp_summary(race, target_year, session_results)
-            await _reply_qq_md(ictx, md, fallback_text=text)
+            await _reply_text(ictx, fmt.fmt_gp_summary(race, target_year, session_results))
         except Exception:
             logger.exception("/gp 失败")
             await _reply_error(ictx)
@@ -615,8 +615,7 @@ def register_commands(bot, cc: CommandContext):
                 await _reply_text(ictx, _d(f"⚠️ 天气数据获取失败：{result['error']}",
                                            f"⚠️ Weather fetch failed: {result['error']}"))
                 return
-            text, md = QQGroupBot.format_race_weather(result)
-            await _reply_qq_md(ictx, md, fallback_text=text)
+            await _reply_text(ictx, fmt.fmt_weather(result))
             # 天气时间序列图：已完赛=OpenF1 实测，未赛=Open-Meteo 预报
             try:
                 from common.chart_factory import render_weather_chart
@@ -1152,6 +1151,8 @@ def register_commands(bot, cc: CommandContext):
                                 f"🏁 Teams ({len(t_names)}/{UserPrefsStore.MAX_WATCH}): {sep.join(t_names)}"))
             lines.append(_d(f"📰 定向新闻推送: {'开' if news_on else '关'}（/news on|off）",
                             f"📰 News DM: {'on' if news_on else 'off'} (/news on|off)"))
+            tz = pref.get("tz")
+            lines.append(T("tz_current", tz=tz) if tz else T("tz_unset"))
             if not d_names and not t_names:
                 lines.append(T("pref_none"))
             emb = discord.Embed(title=T("pref_me_title"), description="\n".join(lines),
@@ -1159,6 +1160,35 @@ def register_commands(bot, cc: CommandContext):
             await ictx.followup.send(embed=emb)
         except Exception:
             logger.exception("/me 失败")
+            await _reply_error(ictx)
+
+    # ---------------- /tz ----------------
+
+    @bot.slash_command(name="tz",
+                       description=_d("设置你的本地时区（AI 问答时间换算用；消息时间戳本就按设备时区显示）",
+                                      "Set your timezone (for AI answers; message timestamps always render locally)"),
+                       guild_ids=gid)
+    async def cmd_tz(ictx: discord.ApplicationContext,
+                     zone: discord.Option(str, _d("IANA 时区名，如 Europe/London（留空查看当前）",
+                                                  "IANA name e.g. Europe/London (empty = show current)"),
+                                          required=False, default=None) = None):
+        await ictx.defer(ephemeral=True)
+        uid = str(ictx.author.id)
+        try:
+            z = (zone or "").strip()
+            if not z:
+                cur = await _run(cc, cc.prefs_store.get_user_tz, uid)
+                await ictx.followup.send(T("tz_current", tz=cur) if cur else T("tz_unset"),
+                                         ephemeral=True)
+                return
+            from pytz import all_timezones_set
+            if z not in all_timezones_set:
+                await ictx.followup.send(T("tz_invalid", tz=z), ephemeral=True)
+                return
+            await _run(cc, cc.prefs_store.set_user_tz, uid, z)
+            await ictx.followup.send(T("tz_set", tz=z), ephemeral=True)
+        except Exception:
+            logger.exception("/tz 失败")
             await _reply_error(ictx)
 
     # ---------------- /unbind ----------------
@@ -1359,6 +1389,15 @@ def register_commands(bot, cc: CommandContext):
                             "IMPORTANT: The user-facing language of this bot is English. "
                             "Answer in English (keep proper nouns like driver/team names in English)."
                             if LANG == "en" else None)
+                        # 用户时区注入（/tz 设置）：AI 答案里的环节时间按用户时区换算
+                        try:
+                            utz = cc.prefs_store.get_user_tz(uid) if cc.prefs_store else None
+                        except Exception:
+                            utz = None
+                        if utz:
+                            tz_note = (f"User's timezone: {utz}. When mentioning F1 session "
+                                       f"times in your answer, convert them to this timezone.")
+                            data_context = f"{data_context}\n{tz_note}" if data_context else tz_note
                         meta: Dict[str, Any] = {}
                         answer = await _run_llm(
                             cc, cc.llm.ask_layered, uid, question,

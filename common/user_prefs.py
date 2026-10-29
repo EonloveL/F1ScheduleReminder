@@ -302,6 +302,17 @@ class UserPrefsStore:
     def news_dm_enabled(self, user_id: str) -> bool:
         return self.get_user_prefs(user_id).get("news_dm", True)
 
+    def set_user_tz(self, user_id: str, tz: str):
+        """用户本地时区（IANA，Discord 版 /tz；LLM 问答时间换算用）"""
+        with self._lock:
+            pref = self._data.setdefault("users", {}).setdefault(user_id, {})
+            pref["tz"] = tz
+            self._save()
+
+    def get_user_tz(self, user_id: str) -> str:
+        """用户时区，未设置返回 None"""
+        return self.get_user_prefs(user_id).get("tz")
+
     def get_all_user_prefs(self) -> Dict[str, Dict[str, Any]]:
         """所有用户的偏好 {user_id: prefs}（用于赛后私聊个性化推送）"""
         return self._data.get("users", {})
