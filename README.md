@@ -11,9 +11,11 @@
 - **自动推送**：练习赛/排位/冲刺/正赛开始前提醒（含当地时间+北京时间双时区、赛道天气），正赛结束后推送完整成绩和最新积分榜，每天早晚推 F1 新闻速递
 - **响应指令**：查赛程、查积分榜、查历史分站成绩、查升级件、查动力单元用量、预测本站名次……
 - **AI 问答**：@它 直接问任何 F1 问题（技术规则、历史数据、本站分析），它会先查真实数据再回答，支持联网核实、多轮追问、识图；发 B站 F1 视频链接可自动导读（字幕 → LLM 成文，管理员 `/bili_login` 扫码解锁字幕接口，无字幕视频可选 ASR 转写兜底）
+- **三层衰减记忆**：对话像人脑一样"近清晰、远模糊、要事不忘"——无关历史不污染新问题，`/clear` 归档成主题摘要而非删除，纠错和"记住这个"会长期锚定；`/memory` 可随时自查
 - **车手评分**：每站正赛后群里发评分链接，群友网页打分，产出车手评分榜和 DOTD（最佳车手）累积榜
 - **实时面板**：比赛周提供网页实时计时面板（名次/圈速/轮胎/Team Radio）
 - **统计图表**：赛后自动推送三联统计图（Pace 分布/轮胎策略/名次变化）、排位差距图、安全车时间线，指令可查积分走势/进站对比/PU 用量/事故成本等
+- **运营友好**：管理员私聊 `/llm` 即可热切换 AI 服务商/密钥/模型（含 Ollama 等本地大模型），密钥出网自动脱敏
 
 ## 效果预览
 
@@ -117,6 +119,9 @@ docker compose up -d
 | `/live` | 实时计时面板（比赛周） |
 | `/setdriver 维斯塔潘` | 关注车手，赛后私聊推送其成绩 |
 | `/news on` | 订阅关注车手/主队的新闻私聊推送 |
+| `/tr 车手 引语` | Team Radio 转播风卡片 DIY |
+| `/memory` | 查看/管理你的会话记忆（`/memory forget <id>` 删除条目） |
+| `/clear` | 归档本轮会话（LLM 总结进长期记忆，不是删除） |
 
 ### AI 问答
 
@@ -128,7 +133,7 @@ docker compose up -d
 @机器人 分析一下上一站法拉利的 stint 节奏
 ```
 
-它会调用 16 个 F1 数据工具取真实数据后作答，支持追问（30 分钟上下文）。发 `/clear` 清空对话上下文。此功能需要配置 LLM Key（见下）。
+它会调用 21 个 F1 数据工具取真实数据后作答，支持识图与多轮追问——记忆机制是"三层衰减"：近期对话原文保留、超时归档为摘要、重要事实长期锚定，换话题不会被旧上下文带偏。发 `/clear` 归档本轮会话，`/memory` 查看它记得什么。此功能需要配置 LLM Key（见下）；有本地 GPU/大内存服务器时可接 Ollama 等本地模型（`LOCAL_LLM_MODEL` 或管理员 `/llm setmodel local <模型>`）。
 
 ## 配置说明
 
@@ -141,7 +146,7 @@ docker compose up -d
 | `BOT_WEBHOOK_SECRET` | ✅ | QQ 开放平台 → 验证密钥（Webhook 验签） |
 | `MOONSHOT_API_KEY` / `DEEPSEEK_API_KEY` | 可选 | AI 问答（Kimi / DeepSeek，[platform.moonshot.cn](https://platform.moonshot.cn) / [platform.deepseek.com](https://platform.deepseek.com) 免费注册），不配则 @机器人 无 AI 回复 |
 | `TAVILY_API_KEY` / `BOCHA_API_KEY` | 可选 | 联网搜索增强 |
-| `ADMIN_OPENIDS` | 可选 | 管理员 openid（知识库审核 `/kb`） |
+| `ADMIN_OPENIDS` | 可选 | 管理员 openid（`/kb` 知识库审核、私聊 `/llm` 热配置 AI 服务商/密钥、`/model` 分层模型） |
 | `OPENF1_USERNAME` / `OPENF1_PASSWORD` | 可选 | OpenF1 sponsor 账号（仅赛中实时场景需要，见下文「锁定窗口」说明） |
 
 完整配置项见 [deploy/.env.example](deploy/.env.example)，全部有中文注释。
