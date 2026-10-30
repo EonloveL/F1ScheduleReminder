@@ -9,7 +9,7 @@
 ## 2026-10-29 (v1.0.1) · 重构（零行为变化）+ Review 修复 + 英文文档
 
 【杂项】
-- 内部重构：`common/llm_assistant.py` 拆分为 `common/llm/` 包（七模块 mixin 组合，外部 import 面不变）；QQ 版 main.py 指令分发拆为 `handlers/` 包——可维护性提升，用户无感知
+- 内部重构：`common/llm_assistant.py` 拆分为 `common/llm/` 包（七模块 mixin 组合，外部 import 面不变）；main.py 指令分发拆为根目录 `handlers/` 包（八领域模块 + COMMAND_HANDLERS 注册表，main.py 3359→1875 行）——可维护性提升，用户无感知
 
 【修复】
 - L1 原生 function calling 路径在"finish_reason=stop 且同时返回 tool_calls"的兼容端点上会丢弃工具调用
