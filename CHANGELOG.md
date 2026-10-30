@@ -19,6 +19,7 @@
 - /last 赛季初（1-3 月）查不到"上一场"（当前赛季无已结束环节时未回退上一赛季）
 - /rate /ratings 在 scheduler 并发写时偶发 RuntimeError（改快照读取）
 - 供应商级错误信息在并发问答下可能串用户（改 qid 键控，兼容旧读取）
+- B站视频导读门禁误拦：判定文本不含视频 tag（UP 主为推流常只打分站名/车手名 tag）→ tag 端点数据纳入门禁，词库补赛道举办地
 
 【文档】
 - 英文版全套文档：README_EN.md（主页）、docs/LLM_GUIDE_EN.md、docs/ADMIN_GUIDE_EN.md、deploy/README_EN.md

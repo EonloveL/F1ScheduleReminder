@@ -1139,6 +1139,9 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
             return {"error": f"视频信息获取失败（{bvid}），可能已删除/审核中或接口风控"}
         if not info.get("cid"):
             return {"error": f"视频 {bvid} 缺少 cid（分P信息异常），无法取字幕"}
+        # 填充 tag 进门禁判定文本（分站名/车手名常只在 tag 里——2026-10-30 误拦实证）
+        if not info.get("tags"):
+            info["tags"] = client.get_tags(bvid)
         base = {"title": info["title"], "uploader": info["owner"],
                 "duration_min": round(info["duration"] / 60, 1), "bvid": bvid}
         is_f1, hits = BiliVideoClient.is_f1_related(info)

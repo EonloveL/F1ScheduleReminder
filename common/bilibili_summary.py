@@ -195,11 +195,27 @@ class BiliVideoClient:
             "desc": d.get("desc", "") or "",
             "owner": (d.get("owner") or {}).get("name", ""),
             "tname": d.get("tname", ""),
+            "tags": "",  # 由 get_tags() 另行填充（view/INITIAL_STATE 均不含 tag 列表）
             "duration": int(d.get("duration") or 0),
             "pages": [{"cid": p.get("cid"), "part": p.get("part", "")}
                       for p in (d.get("pages") or [])],
             "cid": d.get("cid") or ((d.get("pages") or [{}])[0].get("cid")),
         }
+
+    def get_tags(self, bvid: str) -> str:
+        """视频 tag 列表（空格拼接）。/x/tag/archive/tags 匿名可用；
+        失败静默（门禁词库减弱而已，不阻断流程）。
+        背景 2026-10-30：群友 F1 分站视频 tag 只有分站名+车手名（无"F1"字样），
+        门禁判定文本不含 tag 导致误拦——tag 是 UP 主给平台推流的关键词，F1 信号很强"""
+        try:
+            r = self.s.get(f"{API}/x/tag/archive/tags", params={"bvid": bvid},
+                           timeout=self.timeout).json()
+            if r.get("code") == 0:
+                tags = [t.get("tag_name", "") for t in (r.get("data") or [])]
+                return " ".join(t for t in tags if t)
+        except Exception as e:
+            logger.debug(f"[Bili] tag 获取失败 {bvid}（门禁词库减弱）: {e}")
+        return ""
 
     # ---------- F1 门禁 ----------
 
@@ -210,7 +226,8 @@ class BiliVideoClient:
         len<6 弱命中（kimi/max 类短别名需另有其他命中佐证，防 "Kimi AI助手" 类误报）；
         纯 ASCII 的内置词豁免短长度（f1/drs 等）。任一强命中或 ≥2 个命中判 F1 相关"""
         hay = " ".join([info.get("title", ""), info.get("desc", ""),
-                        info.get("owner", ""), info.get("tname", "")]).lower()
+                        info.get("owner", ""), info.get("tname", ""),
+                        info.get("tags", "")]).lower()
         strong_terms = set(_F1_STRONG)
         weak_terms = set()
         try:
@@ -243,7 +260,13 @@ class BiliVideoClient:
         try:
             from .circuits_manager import CircuitsManager
             for c in CircuitsManager().circuits_data.values():
-                for n in (c.get("name", ""), c.get("name_en", "")):
+                names = [c.get("name", ""), c.get("name_en", "")]
+                # 举办地（locality：suzuka/monza…）——分站视频的 tag 常只写地名
+                loc = ((c.get("location") or {}).get("locality")
+                       or (c.get("Location") or {}).get("locality") or "")
+                if loc:
+                    names.append(loc)
+                for n in names:
                     if n and len(n) >= 3:
                         strong_terms.add(n.lower())
         except Exception as e:
