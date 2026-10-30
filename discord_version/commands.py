@@ -116,9 +116,13 @@ async def _run(cc: CommandContext, fn, *args, **kwargs):
 
 
 async def _run_llm(cc: CommandContext, fn, *args, **kwargs):
-    """LLM 调用走专用线程池（不占指令线程池；超时由 LLM_ASK_HARD_TIMEOUT 语义控制）"""
+    """LLM 调用走专用线程池（不占指令线程池）；
+    硬超时 = LLM_ASK_HARD_TIMEOUT + 30s 余量（防极端长尾把用户锁/信号量槽占死）"""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(cc.llm_executor, functools.partial(fn, *args, **kwargs))
+    hard = int(os.getenv("LLM_ASK_HARD_TIMEOUT", "600")) + 30
+    return await asyncio.wait_for(
+        loop.run_in_executor(cc.llm_executor, functools.partial(fn, *args, **kwargs)),
+        timeout=hard)
 
 
 async def _reply_text(ictx: discord.ApplicationContext, text: str):

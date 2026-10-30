@@ -1,5 +1,7 @@
 # F1 Schedule Reminder Bot
 
+**中文** | [English](README_EN.md)
+
 一个跑在 QQ 群里的 F1 助手机器人。基于 QQ 官方 Bot API V2，不用任何第三方框架协议，稳定合规。
 
 > 🌐 **Discord 版已上线**（海外用户）：全功能移植——定时推送、31 条斜杠指令、图表直传、`/ask` AI 问答、双语界面。见 [discord_version/README.md](discord_version/README.md)（English guide included）。
@@ -149,7 +151,7 @@ docker compose up -d
 | `ADMIN_OPENIDS` | 可选 | 管理员 openid（`/kb` 知识库审核、私聊 `/llm` 热配置 AI 服务商/密钥、`/model` 分层模型） |
 | `OPENF1_USERNAME` / `OPENF1_PASSWORD` | 可选 | OpenF1 sponsor 账号（仅赛中实时场景需要，见下文「锁定窗口」说明） |
 
-完整配置项见 [deploy/.env.example](deploy/.env.example)，全部有中文注释。
+完整配置项见 [deploy/.env.example](deploy/.env.example)，全部有中文注释。LLM 接入手册（每个配置项对应哪个功能/哪层模型）：[docs/LLM_GUIDE.md](docs/LLM_GUIDE.md)（[English](docs/LLM_GUIDE_EN.md)）；管理员手册：[docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md)（[English](docs/ADMIN_GUIDE_EN.md)）。
 
 ## 本地运行（不想用 Docker）
 

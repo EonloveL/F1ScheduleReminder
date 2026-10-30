@@ -6,6 +6,27 @@
 
 ---
 
+## 2026-10-29 (v1.0.1) · 重构（零行为变化）+ Review 修复 + 英文文档
+
+【杂项】
+- 内部重构：`common/llm_assistant.py` 拆分为 `common/llm/` 包（七模块 mixin 组合，外部 import 面不变）；QQ 版 main.py 指令分发拆为 `handlers/` 包——可维护性提升，用户无感知
+
+【修复】
+- L1 原生 function calling 路径在"finish_reason=stop 且同时返回 tool_calls"的兼容端点上会丢弃工具调用
+- kimi 推理档位 env 配错（如 LLM_L2_REASONING=off）导致 L2 成文 400 误判失败：白名单校验+回退默认
+- 截断续写两轮后仍截断时，拼接结果未做前言/退化复检；轮次耗尽时截断前缀可能未拼回（答案前半段丢失）
+- /bili_login 扫码中途异常会永久占用防重入标记（只能重启恢复）
+- /last 赛季初（1-3 月）查不到"上一场"（当前赛季无已结束环节时未回退上一赛季）
+- /rate /ratings 在 scheduler 并发写时偶发 RuntimeError（改快照读取）
+- 供应商级错误信息在并发问答下可能串用户（改 qid 键控，兼容旧读取）
+
+【文档】
+- 英文版全套文档：README_EN.md（主页）、docs/LLM_GUIDE_EN.md、docs/ADMIN_GUIDE_EN.md、deploy/README_EN.md
+- 新增 LLM 接入手册 docs/LLM_GUIDE.md（中英双语）：每个配置项 ↔ 功能/模型分层对照表
+- deploy/.env.example 增补本地大模型与向量召回配置项
+
+---
+
 ## 2026-10-29 · Discord 版上线 + 三层衰减会话记忆 + 管理员运行时配置
 
 【新增】
