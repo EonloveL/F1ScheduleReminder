@@ -1118,8 +1118,10 @@ Formula 1 🏎️💨"""
         parts = []
         if s.get("weather_desc"):
             parts.append(s["weather_desc"])
-        if s.get("air_temp"):
-            parts.append(f"气温{s['air_temp']['min']}-{s['air_temp']['max']}°C")
+        _air = s.get("air_temp_measured") or s.get("air_temp")
+        if _air:
+            parts.append(f"气温{_air['min']}-{_air['max']}°C"
+                         + ("（实测）" if s.get("air_temp_measured") else ""))
         # 赛道温度优先级：实测沥青 > 模型估算 > 土壤代理
         if s.get("track_temp_measured"):
             tt = s["track_temp_measured"]
@@ -1178,8 +1180,12 @@ Formula 1 🏎️💨"""
             md += line + "\r"
 
         note = "沥青温度为模型估算/代理值时以实际为准"
+        if result.get("fetched_at"):
+            note += f"；数据抓取时间 {result['fetched_at']}"
+        if result.get("window_note"):
+            note += f"\n{result['window_note']}"
         text += f"\n{note}"
-        md += f"\r> {note}"
+        md += f"\r> {note.replace(chr(10), chr(13))}"
         return text, md
 
     def send_standings_update(self, standings: Dict[str, Any], race_name: str = "",

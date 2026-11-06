@@ -68,8 +68,10 @@ def _weather_line(s: Dict[str, Any], label: str = "") -> str:
     parts = []
     if s.get("weather_desc"):
         parts.append(s["weather_desc"])
-    if s.get("air_temp"):
-        parts.append(T("wx_air", lo=s["air_temp"]["min"], hi=s["air_temp"]["max"]))
+    _air = s.get("air_temp_measured") or s.get("air_temp")
+    if _air:
+        parts.append(T("wx_air", lo=_air["min"], hi=_air["max"])
+                     + (T("wx_measured_suffix") if s.get("air_temp_measured") else ""))
     if s.get("track_temp_measured"):
         tt = s["track_temp_measured"]
         parts.append(T("wx_track_measured", lo=tt["min"], hi=tt["max"]))
@@ -92,10 +94,15 @@ def _weather_line(s: Dict[str, Any], label: str = "") -> str:
 
 
 def fmt_weather(result: Dict[str, Any]) -> str:
-    """分站天气分析包（各环节 <t:> 时间戳 + 天气/沥青/风）"""
+    """分站天气分析包（各环节 <t:> 时间戳 + 天气/沥青/风 + 数据时间/窗口说明）"""
     race = result.get("race", "")
+    meta = " · ".join(x for x in (result.get("data_kind", ""),
+                                  (T("wx_data_time", ts=result["fetched_at"])
+                                   if result.get("fetched_at") else ""),
+                                  (T("wx_elevation", m=result["elevation_m"])
+                                   if result.get("elevation_m") is not None else "")) if x)
     head = (f"## 🌤️ {T('weather_title', race=race)}\n"
-            f"> 📍 {result.get('circuit', '')} · {result.get('location', '')} · {result.get('data_kind', '')}\n\n")
+            f"> 📍 {result.get('circuit', '')} · {result.get('location', '')} · {meta}\n\n")
     lines = []
     if result.get("current"):
         lines.append(f"**{_weather_line(result['current'], T('weather_current'))}**\n")
@@ -113,6 +120,8 @@ def fmt_weather(result: Dict[str, Any]) -> str:
                 pass
         lines.append(_weather_line(s, f"**{s.get('session', '')}**{when}"))
     lines.append(f"\n> {T('weather_note')}")
+    if result.get("window_note"):
+        lines.append(f"> {T('wx_window_note')}")
     return head + "\n".join(lines)
 
 

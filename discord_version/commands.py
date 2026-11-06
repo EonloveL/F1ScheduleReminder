@@ -590,7 +590,10 @@ def register_commands(bot, cc: CommandContext):
     async def cmd_weather(ictx: discord.ApplicationContext,
                           gp: discord.Option(str, _d("地点/赛道/R几（可空=下一站）",
                                                      "Place/circuit/R# (default: next race)"),
-                                             required=False, default=None) = None):
+                                             required=False, default=None) = None,
+                          live: discord.Option(bool, _d("强制实时刷新（跳过缓存）",
+                                                        "Force live refresh (bypass cache)"),
+                                               required=False, default=False) = False):
         await ictx.defer()
         try:
             def _fetch_weather():
@@ -607,7 +610,7 @@ def register_commands(bot, cc: CommandContext):
                 if not race:
                     return None, None
                 sessions = cc.f1_api.get_all_sessions(race)
-                return WeatherAPI().get_race_weather(race, sessions), race
+                return WeatherAPI().get_race_weather(race, sessions, live=bool(live)), race
 
             result, race_obj = await _run(cc, _fetch_weather)
             if not result:

@@ -20,6 +20,7 @@ data/*
 !data/drivers_profile.json
 !data/pu_limits.json
 !data/circuits_data.json
+!data/circuit_elevation.json
 !data/prediction_model.json
 !data/prediction_dataset_*.json
 

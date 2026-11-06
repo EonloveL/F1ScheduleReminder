@@ -257,10 +257,10 @@ HELP_MARKDOWN = """## 🏎️ F1机器人指令面板
 **查询类**
 /drivers 车手积分榜 · /teams 车队积分榜
 /calendar 全年赛历 · /next [地点/赛道/R几] 分站周末赛程（如 /next 蒙扎、/next R16）
-/weather [地点/R几] 分站天气/赛道温度/风速风向
+/weather [地点/R几] [now] 分站天气/赛道温度/风速风向（now=实时刷新）
 /last [环节] 上一场成绩（fp1/fp2/fp3/qualy/sq/sprint/race）
 /gp 地点 [年份] [环节] 分站成绩（如 /gp 蒙扎、/gp 斯帕 2022 race）
-/weather [地点/R几] 分站天气与赛道温度（如 /weather 蒙扎）
+/weather [地点/R几] [now] 分站天气与赛道温度（now=实时刷新，如 /weather 蒙扎 now）
 /watch 观赛直播链接 · /live 实时计时面板
 
 **🔧 技术数据**

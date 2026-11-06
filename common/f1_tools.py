@@ -75,7 +75,7 @@ F1_TOOLS = [
     {"type": "function", "function": {"name": "verify_lap_record", "description": "联网核查赛道F1正赛圈速纪录（以F1官网为权威源），返回官网纪录与本地数据对比，不一致时自动更新本地。gp为赛道或分站名（中英文），留空则核查下一站", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "赛道或分站名"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_upgrade_analysis_data", "description": "升级件效果分析数据包：某站各车队升级件申报明细（含意图/差异/工作原理备注）+ 相关车队近4站完赛名次与积分趋势 + 跨赛道可比的归一化圈速 pace_index（全场最快圈中位数/本队最快圈×100，=100为中位）。gp为分站名（中英文），留空取最近一站。用于深度分析升级效果；跨赛道圈速对比必须用pace_index，禁止直接比较不同赛道的绝对圈速", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "分站名"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_race_prediction", "description": "获取分站排位与正赛名次的统计模型预测（名次制线性回归：积分榜/近期状态/赛道历史/车队赛道类型敏感度/升级件/罚退前提，含蒙特卡洛概率与回测基准）。gp为分站名（中英文/轮次R5），留空取下一站；premises_penalties为罚退（{\"车手名\":位数}），premises_standins为代打（{\"下车手\":\"代打者\"}）。预测/竞猜/前瞻类问题必须调用本工具，禁止凭感觉预测", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "分站名或轮次"}, "premises_penalties": {"type": "object", "description": "罚退前提 {车手: 位数}"}, "premises_standins": {"type": "object", "description": "代打前提 {下车手: 代打者}"}}, "required": []}}},
-    {"type": "function", "function": {"name": "get_race_weather", "description": "获取分站比赛时段的赛道当地天气：已结束环节用 OpenF1 实测（真实沥青赛道温度/降雨/湿度/风，2023+）；未来环节用 Open-Meteo 预报+沥青温度估算模型 track_temp_estimated（土壤+气温+短波辐射回归，R²=0.81 RMSE≈3.9°C，优于土壤代理）。含降水概率/降水ETA(开始多久后可能降水)/风力。gp为分站名（中英文/轮次R5），year为赛季年份，均留空取下一站。预测/分析类问题（下雨概率、轮胎策略、升温窗口）必须调用；引用赛道温度时优先级 measured(实测) > estimated(模型估算) > proxy(土壤代理)", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "分站名或轮次"}, "year": {"type": "integer", "description": "赛季年份"}}, "required": []}}},
+    {"type": "function", "function": {"name": "get_race_weather", "description": "获取分站比赛时段的赛道当地天气：已结束环节用 OpenF1 实测（真实沥青赛道温度/降雨/湿度/风，2023+）；未来环节用 Open-Meteo 预报+沥青温度估算模型 track_temp_estimated（土壤+气温+短波辐射回归，R²=0.81 RMSE≈3.9°C，优于土壤代理）。含 15 分钟级降水概率/降水ETA(开始多久后可能降水)/风力/实时 current；live=true 强制实时刷新。gp为分站名（中英文/轮次R5），year为赛季年份，均留空取下一站。预测/分析类问题（下雨概率、轮胎策略、升温窗口）必须调用；引用赛道温度时优先级 measured(实测) > estimated(模型估算) > proxy(土壤代理)", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "分站名或轮次"}, "year": {"type": "integer", "description": "赛季年份"}, "live": {"type": "boolean", "description": "true=强制实时刷新（跳过缓存）；用户问现在/实时天气时置 true"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_telemetry_chart", "description": "获取F1Cosmos遥测可视化仪表盘链接（网页内自选年份/分站/环节/车手，速度/油门/刹车曲线对比，分段与测速点分析）。遥测/圈速对比类问题时调用，把url放进回答", "parameters": {"type": "object", "properties": {"drivers": {"type": "string", "description": "车手列表（可选）"}, "gp": {"type": "string", "description": "分站名（可选）"}, "session": {"type": "string", "description": "环节（可选）"}, "lap": {"type": "integer", "description": "圈号（可选）"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_team_strengths", "description": "车队实力画像（数据推导，非主观）：从本赛季排位pace_index+完赛名次+FIA升级件计算——各车队 赛季/近期pace与趋势、按赛道下压力档/轮胎负荷档/高海拔的相对强弱（负值=该类型相对更强）、sunday_delta正赛兑现率（负=正赛强于排位=正赛节奏与轮胎管理代理指标）、升级件前后pace变化。team为车队名（中英文），留空返回全部车队。回答“某队为什么在X类赛道强/升级有没有用/谁正赛节奏好”类问题必须调用本工具拿数据说话，禁止凭印象声称车队特性", "parameters": {"type": "object", "properties": {"team": {"type": "string", "description": "车队名，留空为全部"}, "gp": {"type": "string", "description": "分站名（可选，给出则按该站赛道类型返回各队匹配强弱）"}}, "required": []}}},
     {"type": "function", "function": {"name": "get_stint_analysis", "description": "正赛 stint 长距离节奏与轮胎衰减分析（OpenF1 数据，2023+ 含轮胎配方与每段起止圈；更早赛季用 Jolpica 兜底但无配方）：每位车手各 stint 的中位圈速、衰减斜率（ms/圈）、轮胎配方序列（红软/黄中/白硬）。gp 为分站名/轮次（留空=最近一场已完赛），driver 指定车手（留空=全场按最快 stint 排序）。问正赛节奏/轮胎管理/长距离速度/衰减/stint 表现时必须调用本工具拿数据，禁止凭印象回答", "parameters": {"type": "object", "properties": {"gp": {"type": "string", "description": "分站名或轮次（如 蒙扎/R13），留空取最近一场已完赛"}, "driver": {"type": "string", "description": "车手名（中英文/别名），留空为全场"}, "year": {"type": "integer", "description": "赛季年份，留空为当前赛季"}}, "required": []}}},
@@ -898,8 +898,8 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
                 pass
         return result
 
-    def _race_weather(gp="", year=None):
-        """分站比赛时段天气分析包（预报/实测归档）"""
+    def _race_weather(gp="", year=None, live=False):
+        """分站比赛时段天气分析包（预报/实测归档；live=True 强制实时刷新）"""
         from common.weather_api import WeatherAPI
         q_season = int(year) if year else season
         q = (gp or "").strip()
@@ -918,7 +918,8 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
             if not race:
                 return {"error": "本赛季已无剩余比赛"}
         sessions = f1_api.get_all_sessions(race)
-        result = WeatherAPI().get_race_weather(race, sessions, year=q_season)
+        result = WeatherAPI().get_race_weather(race, sessions, year=q_season,
+                                               live=bool(live))
         # 载荷瘦身：逐环节的 note 字段是同一句长说明，重复5次会撑爆 L2 注入截断上限
         for s in (result.get("sessions") or []):
             for k in ("track_temp_proxy", "track_temp_estimated"):

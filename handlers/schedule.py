@@ -192,11 +192,20 @@ async def handle_weather(ctx, message, arg, member_openid, is_dm):
     import asyncio as _aio
     loop = _aio.get_running_loop()
 
+    # 尾缀 now/live/实时 → 强制实时刷新（跳过缓存；雨战/临近发车用）
+    q = (arg or "").strip()
+    live = False
+    import re as _re_w
+    _m_live = _re_w.search(r"(?:^|\s)(实时天气|实时|now|live)$|(?:实时天气|实时)$", q, _re_w.I)
+    if _m_live:
+        live = True
+        q = q[: _m_live.start()].strip()
+
     def _fetch_weather():
         from common.weather_api import WeatherAPI
         race = None
-        if arg:
-            info = parse_race_query(arg)
+        if q:
+            info = parse_race_query(q)
             race = find_race_for_query(f1_api, info["year"] or SEASON,
                                        info["round"], info["gp"])
             if not race:
@@ -206,13 +215,13 @@ async def handle_weather(ctx, message, arg, member_openid, is_dm):
         if not race:
             return None, None
         sessions = f1_api.get_all_sessions(race)
-        return WeatherAPI().get_race_weather(race, sessions), race
+        return WeatherAPI().get_race_weather(race, sessions, live=live), race
 
     result, race_obj = await loop.run_in_executor(None, _fetch_weather)
     if not result:
-        head = (f"未找到「{arg}」对应的分站" if arg else "本赛季已无剩余比赛")
+        head = (f"未找到「{q}」对应的分站" if q else "本赛季已无剩余比赛")
         await ctx.reply_text(message,
-            head + "\n用法: /weather [地点/赛道/R几]，如 /weather 蒙扎、/weather R14")
+            head + "\n用法: /weather [地点/赛道/R几] [now|实时]，如 /weather 蒙扎、/weather R14 now")
         return
     if result.get("error"):
         await ctx.reply_text(message, f"⚠️ 天气数据获取失败：{result['error']}")
