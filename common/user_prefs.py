@@ -339,7 +339,9 @@ def resolve_driver(query: str, driver_entries: List[Dict[str, Any]]) -> Optional
             if e.get("Driver", {}).get("driverId") == target:
                 d = e["Driver"]
                 return target, f"{d.get('givenName', '')} {d.get('familyName', '')}".strip()
-        return target, target
+        # standings 拉取失败/为空时，从本地档案取标准显示名，避免回退成 driver_id
+        from .drivers_profile import get_driver_en_map
+        return target, get_driver_en_map().get(target, target)
 
     for e in driver_entries:
         d = e.get("Driver", {})
@@ -373,7 +375,9 @@ def resolve_team(query: str, team_entries: List[Dict[str, Any]]) -> Optional[Tup
         for e in team_entries:
             if e.get("Constructor", {}).get("constructorId") == target:
                 return target, e["Constructor"].get("name", target)
-        return target, target
+        # standings 拉取失败/为空时，从本地档案取标准显示名，避免回退成 constructor_id
+        from .drivers_profile import get_team_en_map
+        return target, get_team_en_map().get(target, target)
 
     for e in team_entries:
         c = e.get("Constructor", {})

@@ -28,7 +28,7 @@ CASES = {
     "/drivers": None,
     "/teams": None,
     "/gp madring 2026 race": "正赛",
-    "/gp madring 2026": "练习赛",          # 全环节汇总路径（2026-10-15 事故路径）
+    "/gp madring 2026": "Spanish Grand Prix",  # 全环节汇总路径（2026-10-15 事故路径）；f1api.dev 2026 数据 402，fallback 无练习赛，改验赛程名
     "/gp 斯帕 2021 sprint": "Belgian",
     "/watch": None,
     "/live": None,

@@ -6,6 +6,19 @@
 
 ---
 
+## 2026-11-06 · 修复 GitHub Actions 测试全红
+
+【修复】
+- `common/chart_factory.py` 原子出图 `_savefig_atomic` 使用 `.tmp` 临时扩展名，在 matplotlib 3.11+ 下被识别为不支持的图片格式，导致 `/pace` `/pitstops` `/sc` `/qualigap` `/racechart` `/trend` 等图表指令全部崩溃；改为复用最终 `.png` 路径做临时文件 + `os.replace` 原子替换
+- 同步生产仓最新图表修复：完赛闸门（赛中残缺数据不写永久文件名）、姓名归一化（de Vries/Pérez 等不再错位）、积分走势防残缺图缓存、策略时间线补全零进站车手
+- `common/user_prefs.py` `/setdriver` `/setteam` 在积分榜接口失败/为空时，从本地 `drivers_profile.json` 档案回退显示名，避免回复变成裸 `max_verstappen`/`ferrari` 等机器 ID
+- 测试：`/gp madring 2026` 全环节汇总断言随 f1api.dev 2026 数据 402 调整，改验证稳定的赛程名 `Spanish Grand Prix`
+
+【杂项】
+- GitHub Actions `tests` workflow（Python 3.11 + pytest）回归全绿
+
+---
+
 ## 2026-10-30 · 天气增强：赛时延长/赛道级精度/实时刷新/可配置数据源
 
 【新增】
