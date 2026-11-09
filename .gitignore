@@ -24,5 +24,9 @@ data/*
 !data/prediction_model.json
 !data/prediction_dataset_*.json
 
+# 图表导出缓存（运行测试/指令时生成，按轮次自动破缓存，无需提交）
+common/data/exports/
+data/exports/
+
 # 部署产物
 *.zip
