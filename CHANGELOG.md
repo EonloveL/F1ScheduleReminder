@@ -6,6 +6,13 @@
 
 ---
 
+## 2026-11-09 · 预测模型回归闸门 + 测试加固
+
+【新增】
+- `tests/test_prediction_model.py` 新增 `TestRegressionBacktest`：离线拟合 2024 / 2023+2024 → 留一法回测 2025，断言领奖台命中 ≥2.0/场、MAE ≤3.8、排位 Top3 命中 ≥1.8/场；每次改动 `MODEL_VERSION`、特征工程或超参时指标滑坡将直接 CI 失败
+
+---
+
 ## 2026-11-06 · 修复 GitHub Actions 测试全红
 
 【修复】
