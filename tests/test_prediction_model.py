@@ -54,45 +54,47 @@ class TestSCStrength:
         assert m._sc_strength("nowhere") == 0.0
 
 
+THRESHOLD_PODIUM = 2.0
+THRESHOLD_MAE = 3.8
+THRESHOLD_QUALI_TOP3 = 1.8
+
+
+@pytest.fixture(scope="module")
+def prediction_model():
+    """模块级单一实例：F1API(season=2026) 保证 2024/2025 走本地 JSON，不触网。"""
+    f1_api = F1API(season=2026)
+    return RacePredictionModel(f1_api, f1cosmos=None)
+
+
+@pytest.fixture(scope="module")
+def report_default(prediction_model):
+    """生产默认窗口：2023+2024 拟合，2025 回测。"""
+    model = prediction_model.fit(train_years=(2023, FIT_YEAR))
+    return prediction_model.backtest(year=2025, model=model)
+
+
+@pytest.fixture(scope="module")
+def report_2024_only(prediction_model):
+    """真实场景窗口：只用上一年（2024）拟合，预测当年（2025）。"""
+    model = prediction_model.fit(train_years=(2024,))
+    return prediction_model.backtest(year=2025, model=model)
+
+
+def _assert_metrics(report):
+    assert report["races_tested"] >= 20, f"回测场次不足: {report['races_tested']}"
+    assert report["podium_hits_per_race"] >= THRESHOLD_PODIUM, (
+        f"领奖台命中 {report['podium_hits_per_race']}/场 低于阈值 {THRESHOLD_PODIUM}")
+    assert report["mean_abs_pos_error"] <= THRESHOLD_MAE, (
+        f"MAE {report['mean_abs_pos_error']} 高于阈值 {THRESHOLD_MAE}")
+    assert report["quali_top3_hits_per_race"] >= THRESHOLD_QUALI_TOP3, (
+        f"排位Top3命中 {report['quali_top3_hits_per_race']}/场 低于阈值 {THRESHOLD_QUALI_TOP3}")
+
+
 class TestRegressionBacktest:
-    """回归闸门：每次改动 MODEL_VERSION / 特征工程 / 超参时，指标滑坡直接红。
-
-    用 F1API(season=2026) 保证 build_season_dataset 走本地 JSON 缓存
-    （2024/2025 < 2026，不触发网络），f1cosmos=None 跳过升级件网络请求。
-    """
-
-    THRESHOLD_PODIUM = 2.0
-    THRESHOLD_MAE = 3.8
-    THRESHOLD_QUALI_TOP3 = 1.8
-
-    @pytest.fixture(scope="class")
-    def model_factory(self):
-        f1_api = F1API(season=2026)
-        return RacePredictionModel(f1_api, f1cosmos=None)
-
-    @pytest.fixture(scope="class")
-    def report_default(self, model_factory):
-        model = model_factory.fit(train_years=(2023, FIT_YEAR))
-        return model_factory.backtest(year=2025, model=model)
-
-    @pytest.fixture(scope="class")
-    def report_2024_only(self, model_factory):
-        model = model_factory.fit(train_years=(2024,))
-        return model_factory.backtest(year=2025, model=model)
-
-    def _assert_metrics(self, report):
-        assert report["races_tested"] >= 20, f"回测场次不足: {report['races_tested']}"
-        assert report["podium_hits_per_race"] >= self.THRESHOLD_PODIUM, (
-            f"领奖台命中 {report['podium_hits_per_race']}/场 低于阈值 {self.THRESHOLD_PODIUM}")
-        assert report["mean_abs_pos_error"] <= self.THRESHOLD_MAE, (
-            f"MAE {report['mean_abs_pos_error']} 高于阈值 {self.THRESHOLD_MAE}")
-        assert report["quali_top3_hits_per_race"] >= self.THRESHOLD_QUALI_TOP3, (
-            f"排位Top3命中 {report['quali_top3_hits_per_race']}/场 低于阈值 {self.THRESHOLD_QUALI_TOP3}")
+    """回归闸门：每次改动 MODEL_VERSION / 特征工程 / 超参时，指标滑坡直接红。"""
 
     def test_default_window(self, report_default):
-        """生产默认窗口：2023+2024 拟合，2025 回测。"""
-        self._assert_metrics(report_default)
+        _assert_metrics(report_default)
 
     def test_2024_only_window(self, report_2024_only):
-        """真实场景窗口：只用上一年（2024）拟合，预测当年（2025）。"""
-        self._assert_metrics(report_2024_only)
+        _assert_metrics(report_2024_only)

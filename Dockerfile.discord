@@ -8,10 +8,17 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-COPY discord_version/requirements.txt /app/discord_version/requirements.txt
-# 国内构建可加速：-i https://mirrors.aliyun.com/pypi/simple/
-RUN pip install --no-cache-dir -r /app/discord_version/requirements.txt
+# 安装 uv 用于依赖锁定（可复现构建）
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+# 先复制依赖描述并锁定安装，利用 Docker 缓存层
+COPY pyproject.toml uv.lock /app/
+RUN uv sync --locked --extra discord --no-dev --no-install-project
+
+# 创建非 root 运行用户，确保数据/导出目录可写
+RUN useradd -m -u 1000 bot && mkdir -p /app/data/exports && chown -R bot:bot /app
+
+# 复制应用代码并完成 editable 安装
 COPY common /app/common
 # 数据档案作为种子打入镜像，容器启动时补缺到 /app/data（volume 挂载点）
 COPY data /app/data_seed
@@ -21,7 +28,10 @@ COPY web/__init__.py /app/web/__init__.py
 COPY web/telemetry.html /app/web/telemetry.html
 COPY web/telemetry_overlay.html /app/web/telemetry_overlay.html
 COPY discord_version /app/discord_version
+RUN uv sync --locked --extra discord --no-dev
 
+ENV PATH="/app/.venv/bin:$PATH"
+USER bot
 WORKDIR /app/discord_version
 
 CMD ["python", "-u", "main.py"]
