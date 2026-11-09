@@ -13,8 +13,11 @@ import pytest
 
 @pytest.fixture
 def qq_commands():
-    """QQ 侧指令名集合。"""
-    from handlers import COMMAND_HANDLERS
+    """QQ 侧指令名集合。兼容 OSS 根目录布局与生产仓 qq_group_official_version 子目录布局。"""
+    try:
+        from handlers import COMMAND_HANDLERS
+    except ImportError:
+        from qq_group_official_version.handlers import COMMAND_HANDLERS
     return set(COMMAND_HANDLERS.keys())
 
 
