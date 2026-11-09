@@ -67,6 +67,8 @@ live = [
     # 实时计时面板 TR 转写（server_deploy_qq_official/requirements-live.txt）
     "faster-whisper>=1.0.0",
 ]
+
+[dependency-groups]
 dev = [
     "pytest>=8.0,<10",
     "ruff>=0.8.0",

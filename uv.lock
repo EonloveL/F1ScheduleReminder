@@ -2094,12 +2094,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-dev = [
-    { name = "pytest", version = "8.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
-    { name = "pytest", version = "8.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
-    { name = "pytest", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
-    { name = "ruff" },
-]
 discord = [
     { name = "py-cord", version = "2.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "py-cord", version = "2.8.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
@@ -2116,6 +2110,14 @@ qq = [
     { name = "qrcode", version = "8.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest", version = "8.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "pytest", version = "8.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
+    { name = "pytest", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "apscheduler", specifier = ">=3.10.0,<4" },
@@ -2129,16 +2131,20 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.0.0,<3" },
     { name = "pdfplumber", specifier = ">=0.11.0,<1" },
     { name = "py-cord", marker = "extra == 'discord'", specifier = ">=2.4.0,<3" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0,<10" },
     { name = "python-dateutil", specifier = ">=2.8.0,<3" },
     { name = "python-dotenv", specifier = ">=1.0.0,<2" },
     { name = "pytz", specifier = ">=2023.3" },
     { name = "qq-botpy", marker = "extra == 'qq'", specifier = ">=1.2.1,<2" },
     { name = "qrcode", marker = "extra == 'qq'", specifier = ">=7.4,<9" },
     { name = "requests", specifier = ">=2.28.0,<3" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
 ]
-provides-extras = ["qq", "discord", "live", "dev"]
+provides-extras = ["qq", "discord", "live"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.0,<10" },
+    { name = "ruff", specifier = ">=0.8.0" },
+]
 
 [[package]]
 name = "faster-whisper"

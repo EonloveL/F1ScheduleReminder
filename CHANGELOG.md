@@ -6,6 +6,17 @@
 
 ---
 
+## 2026-11-09 · 修复 Python 3.8 CI 依赖安装 + 双版本矩阵
+
+【修复】
+- `pyproject.toml` 将 `dev` 依赖从 `[project.optional-dependencies]` 迁移到 `[dependency-groups]`，使 `uv sync --dev` 在 Python 3.8 下正确安装 pytest/ruff；此前 CI 3.8  job 因 dev 依赖未生效导致 `ModuleNotFoundError: No module named 'botpy'`
+- `.github/workflows/tests.yml` 安装步骤改为 `uv sync --locked --extra qq --extra discord --dev`（CI 不需要 `live` extra 的 faster-whisper/onnxruntime，其不再支持 Python 3.8）
+
+【变更】
+- CI 矩阵正式运行 Python 3.8 与 3.12 两极；本地已验证两版本均 179 passed
+
+---
+
 ## 2026-11-09 · 预测模型回归闸门 + 测试加固
 
 【新增】
