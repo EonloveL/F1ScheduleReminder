@@ -80,11 +80,6 @@ Issues = "https://github.com/EonloveL/F1ScheduleReminder/issues"
 [tool.ruff]
 target-version = "py38"
 line-length = 120
-select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
-ignore = [
-    "E501",  # 行长度由 formatter/black 处理，ruff 只做逻辑检查
-    "SIM105",  # contextlib.suppress 在 Python 3.8 项目中可保留显式 try/except
-]
 exclude = [
     "venv",
     ".venv",
@@ -93,6 +88,13 @@ exclude = [
     "tr_studio_runtime",
     "go-cqhttp",
     "napcat_win",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "E501",  # 行长度由 formatter/black 处理，ruff 只做逻辑检查
+    "SIM105",  # contextlib.suppress 在 Python 3.8 项目中可保留显式 try/except
 ]
 
 [tool.ruff.lint.pydocstyle]
