@@ -10,6 +10,7 @@
 
 【新增】
 - `tests/test_prediction_model.py` 新增 `TestRegressionBacktest`：离线拟合 2024 / 2023+2024 → 留一法回测 2025，断言领奖台命中 ≥2.0/场、MAE ≤3.8、排位 Top3 命中 ≥1.8/场；每次改动 `MODEL_VERSION`、特征工程或超参时指标滑坡将直接 CI 失败
+- `tests/test_command_parity.py`：QQ 与 Discord 双平台指令一致性测试（严格），断言 32 个核心命令两边同时存在、独占命令有白名单、Discord slash options 与 QQ 侧参数语义一致
 
 ---
 
