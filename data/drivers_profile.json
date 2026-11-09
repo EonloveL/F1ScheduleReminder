@@ -237,6 +237,28 @@
       "team": "alpine",
       "roster_status": "reserve",
       "verified": false
+    },
+    "ryo_hirakawa": {
+      "name_en": "Ryo Hirakawa",
+      "last_name": "Hirakawa",
+      "name_cn": "",
+      "aliases": [],
+      "team": "Haas F1 Team",
+      "roster_status": "substitute",
+      "verified": false,
+      "note": "自动注册（积分榜出现档案外车手，疑季中代打），待人工核实中文名",
+      "registered_at": "2026-11-09"
+    },
+    "rafael_camara": {
+      "name_en": "Rafael Camara",
+      "last_name": "Camara",
+      "name_cn": "",
+      "aliases": [],
+      "team": "Haas F1 Team",
+      "roster_status": "substitute",
+      "verified": false,
+      "note": "自动注册（积分榜出现档案外车手，疑季中代打），待人工核实中文名",
+      "registered_at": "2026-11-09"
     }
   },
   "teams": {
