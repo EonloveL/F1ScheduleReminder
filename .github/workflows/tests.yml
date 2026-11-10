@@ -7,7 +7,9 @@ on:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    # Ubuntu 26.04 (即将成为 ubuntu-latest) 的 actions/setup-python 不提供 3.8，
+    # 固定 24.04 以保证 Python 3.8 + 3.12 双版本可用。
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -26,7 +28,6 @@ jobs:
         # CI 测试不需要 faster-whisper/live extra（其 onnxruntime 依赖不支持 3.8）
         run: uv sync --locked --extra qq --extra discord --dev
       - name: Lint with ruff
-        continue-on-error: true
         run: uv run ruff check common/ handlers/ discord_version/ tests/
       - name: Run tests
         run: uv run pytest tests -q
