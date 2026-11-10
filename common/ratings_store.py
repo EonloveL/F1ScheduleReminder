@@ -30,7 +30,7 @@ import secrets
 import threading
 import time
 from contextlib import contextmanager
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class RatingsStore:
         if not token:
             return
         try:
-            with open(self._flock_path, "r", encoding="utf-8", errors="ignore") as f:
+            with open(self._flock_path, encoding="utf-8", errors="ignore") as f:
                 if f.read().strip() != token:
                     return
             os.remove(self._flock_path)
@@ -115,7 +115,7 @@ class RatingsStore:
     def _load(self) -> Dict[str, Any]:
         if os.path.exists(self.file_path):
             try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
+                with open(self.file_path, encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
                 logger.error(f"读取评分文件失败: {e}")
@@ -373,12 +373,11 @@ class RatingsStore:
             # 跨赛季条目按赛季直接判陈旧（round 裸比会撞号）；本赛季内按比赛周口径
             old_season = int(race.get("season") or cur_season) < cur_season
             superseded = bool(current_round and rnd < current_round)
-            if race_end_passed or superseded or old_season:
-                if self.close_race(key):
-                    closed_keys.append(key)
-                    reason = ("跨赛季陈旧" if old_season else
-                              ('正赛结束超' + str(close_hours) + 'h' if race_end_passed else '新比赛周开始'))
-                    logger.warning(f"陈旧评分场次已静默关闭: {key} ({reason})")
+            if (race_end_passed or superseded or old_season) and self.close_race(key):
+                closed_keys.append(key)
+                reason = ("跨赛季陈旧" if old_season else
+                          ('正赛结束超' + str(close_hours) + 'h' if race_end_passed else '新比赛周开始'))
+                logger.warning(f"陈旧评分场次已静默关闭: {key} ({reason})")
         return closed_keys
 
     def season_dotd_board(self, season: int) -> List[tuple]:

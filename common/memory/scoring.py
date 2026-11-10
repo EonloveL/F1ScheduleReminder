@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """记忆打分：衰减(Δt) × 相关性 × 显著性
 
 score = recency × relevance × salience

@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -55,7 +55,7 @@ class F1NewsCollector:
 
     def _load_state(self) -> Dict[str, Any]:
         try:
-            with open(self.state_file, "r", encoding="utf-8") as f:
+            with open(self.state_file, encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             return {}
@@ -138,9 +138,7 @@ class F1NewsCollector:
     # ---------- 同主题去重/降权 ----------
 
     _STOPWORDS = frozenset(
-        "the a an of at in on to and for with by from after before over under f1 formula "
-        "grand prix gp race racing report news podcast video watch review preview "
-        "what who why how will would could should says said new latest".split())
+        ["the", "a", "an", "of", "at", "in", "on", "to", "and", "for", "with", "by", "from", "after", "before", "over", "under", "f1", "formula", "grand", "prix", "gp", "race", "racing", "report", "news", "podcast", "video", "watch", "review", "preview", "what", "who", "why", "how", "will", "would", "could", "should", "says", "said", "new", "latest"])
 
     @classmethod
     def _topic_key(cls, title: str) -> frozenset:

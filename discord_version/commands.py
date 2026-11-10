@@ -19,25 +19,26 @@ import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone as _tzu
+from datetime import datetime
+from datetime import timezone as _tzu
 from typing import Any, Dict, List, Optional
 
 import discord
 
 try:
-    from bot import DiscordBot, split_text
-    from i18n import T, LANG
     import formatting as fmt
+    from bot import DiscordBot, split_text
+    from i18n import LANG, T
 except ImportError:  # 包形态（discord_version.commands）运行时的回退
-    from discord_version.bot import DiscordBot, split_text
-    from discord_version.i18n import T, LANG
     from discord_version import formatting as fmt
+    from discord_version.bot import DiscordBot, split_text
+    from discord_version.i18n import LANG, T
 
 from common.f1_api import find_race_by_circuit
-from common.f1_tools import parse_race_query, parse_upgrade_query, find_race_for_query
+from common.f1_tools import find_race_for_query, parse_race_query, parse_upgrade_query
 from common.qq_group_bot import QQGroupBot
 from common.secret_guard import scrub_text
-from common.standings_format import parse_driver_standings, parse_constructor_standings
+from common.standings_format import parse_constructor_standings, parse_driver_standings
 from common.user_prefs import UserPrefsStore, resolve_driver, resolve_team
 
 logger = logging.getLogger(__name__)

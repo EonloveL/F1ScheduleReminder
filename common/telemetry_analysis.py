@@ -17,8 +17,8 @@ import logging
 import os
 import re
 import zlib
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -406,11 +406,11 @@ class TelemetrySession:
             return
         for tla, lap_list in getattr(self, "_raw_laps", {}).items():
             wins = []
-            for l in sorted(lap_list, key=lambda x: x["no"]):
-                end = self._session_start_utc + l["end_offset"]
-                start = end - timedelta(seconds=l["time"])
-                wins.append({"no": l["no"], "time": l["time"], "start": start, "end": end,
-                             "sectors": l.get("sectors", {}), "speeds": l.get("speeds", {})})
+            for lap in sorted(lap_list, key=lambda x: x["no"]):
+                end = self._session_start_utc + lap["end_offset"]
+                start = end - timedelta(seconds=lap["time"])
+                wins.append({"no": lap["no"], "time": lap["time"], "start": start, "end": end,
+                             "sectors": lap.get("sectors", {}), "speeds": lap.get("speeds", {})})
             self._lap_windows[tla] = wins
 
     # ==================== 圈选择与遥测切片 ====================
@@ -429,10 +429,7 @@ class TelemetrySession:
         wins = self._lap_windows.get(tla, [])
         win = None
         if wins:
-            if lap_no is None:
-                win = self.get_fastest_lap(tla)
-            else:
-                win = next((w for w in wins if w["no"] == lap_no), None)
+            win = self.get_fastest_lap(tla) if lap_no is None else next((w for w in wins if w["no"] == lap_no), None)
         if win is None:
             win = ref_window
         if not win:

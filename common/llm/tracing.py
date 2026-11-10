@@ -1,6 +1,8 @@
 """全链路 trace ID（qid）工具：thread-local 贯穿 L0/L1/L2 全部日志与工具审计"""
 
 import logging
+import secrets as _secrets
+import threading as _threading
 
 logger = logging.getLogger(__name__)
 
@@ -8,8 +10,6 @@ logger = logging.getLogger(__name__)
 # 一次问答生成一个 qid，经 thread-local 贯穿 L0/L1/L2 全部日志与工具审计。
 # QIDLogFilter 会给该线程内所有日志记录（含 f1_api 等下游模块）附加 qid 字段，
 # 排障时 grep "qid=xxxxxx" 即可捞出完整链路，无需肉眼翻找。
-import secrets as _secrets
-import threading as _threading
 
 _QID_LOCAL = _threading.local()
 

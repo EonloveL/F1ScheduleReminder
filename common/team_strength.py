@@ -15,7 +15,7 @@ F1赛程提醒机器人 - 车队实力画像分析器（数据驱动，非人工
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +37,9 @@ class TeamStrengthAnalyzer:
 
     def _season_tables(self):
         """赛季数据集 -> (每轮车队最快pace表, 车手→车队映射)"""
-        from .prediction_model import RacePredictionModel
         from .circuits_manager import CircuitsManager
         from .f1cosmos_api import canonical_team_key
+        from .prediction_model import RacePredictionModel
 
         pm = RacePredictionModel(self.f1_api, self.f1cosmos)
         ds = pm.build_season_dataset(self.season)
@@ -58,9 +58,8 @@ class TeamStrengthAnalyzer:
                 tk = canonical_team_key(e.get("team", ""))
                 if e.get("driver_id"):
                     drv_team[e["driver_id"]] = tk
-                if e.get("quali_pace"):
-                    if tk not in team_best or e["quali_pace"] < team_best[tk]:
-                        team_best[tk] = e["quali_pace"]
+                if e.get("quali_pace") and (tk not in team_best or e["quali_pace"] < team_best[tk]):
+                    team_best[tk] = e["quali_pace"]
                 if e.get("finish_pos", 99) < 90 and e.get("quali_pos", 99) < 90:
                     sunday_pairs.append({"team_key": tk,
                                          "delta": e["finish_pos"] - e["quali_pos"]})
@@ -91,8 +90,8 @@ class TeamStrengthAnalyzer:
         # 正=衰减快；比 sunday_delta 更直接的轮胎管理证据）
         tire_deg_by_team: Dict[str, List[float]] = {}
         try:
-            from .stint_analysis import StintAnalyzer
             from .prediction_model import _norm_surname
+            from .stint_analysis import StintAnalyzer
             # stint 键为 OpenF1 last_name（verstappen）而 drv_team 键为 Ergast driver_id
             # （max_verstappen）——预建归一化姓氏索引做跨源匹配
             surname_team = {}
@@ -132,9 +131,9 @@ class TeamStrengthAnalyzer:
             recent_avg = sum(recent) / len(recent) if recent else season_avg
             trend = recent_avg - season_avg  # 负值=变快
 
-            def split_score(pred):
-                in_type = [p for _, p, r in paces if pred(r)]
-                out_type = [p for _, p, r in paces if not pred(r)]
+            def split_score(pred, _paces=paces):
+                in_type = [p for _, p, r in _paces if pred(r)]
+                out_type = [p for _, p, r in _paces if not pred(r)]
                 if not in_type or not out_type:
                     return None
                 return round(sum(in_type) / len(in_type) - sum(out_type) / len(out_type), 2)

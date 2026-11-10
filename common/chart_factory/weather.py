@@ -1,12 +1,12 @@
 import os
-from typing import List, Optional
+from typing import Optional
 
 from .core import (
-    logger,
-    EXPORTS_DIR,
     CHART_VER,
-    _setup_dark_fig,
+    EXPORTS_DIR,
     _openf1_session_key,
+    _setup_dark_fig,
+    logger,
 )
 
 
@@ -51,7 +51,9 @@ def _weather_chart_forecast(season: int, round_num: int, race_name: str,
             return None
         loc = (race.get("Circuit", {}) or {}).get("Location", {}) or {}
         lat, lon = float(loc.get("lat")), float(loc.get("long"))
-        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        from datetime import timezone as _tz
         rd = _dt.strptime(race.get("date", ""), "%Y-%m-%d").replace(tzinfo=_tz.utc)
         from ..weather_api import WeatherAPI
         hourly = WeatherAPI()._fetch_hourly(
@@ -93,7 +95,6 @@ def _weather_chart_forecast(season: int, round_num: int, race_name: str,
 def _weather_chart_draw(xs, air, track, rain, wind, path, title,
                         xlabel, precip_is_prob=False) -> str:
     """共用绘制：温度双线 + 降水（实测0/1色带 或 预报概率%）+ 风速"""
-    import numpy as np
     fig, plt = _setup_dark_fig((14, 6.5))
     ax = fig.add_axes([0.06, 0.11, 0.86, 0.76])
     ax.set_facecolor("#1a1d26")

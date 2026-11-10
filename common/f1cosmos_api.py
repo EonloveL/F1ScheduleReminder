@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """
 F1 COSMOS 数据源模块
 提供 F1 升级件 / 动力单元部件配额 / 事故维修成本 数据
@@ -16,7 +17,7 @@ import os
 import re
 import unicodedata
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -49,6 +50,7 @@ TEAM_ALIASES_CN = {
 # 车手中文别名 -> F1Cosmos last_name
 # 数据源：data/drivers_profile.json（common/drivers_profile.py），模块加载时快照
 from .drivers_profile import get_driver_lastname_aliases as _gdla
+
 DRIVER_ALIASES_CN = _gdla()
 del _gdla
 
@@ -69,7 +71,7 @@ def get_pu_limits(season: int = None) -> Dict[str, int]:
     try:
         mtime = os.path.getmtime(_PU_LIMITS_FILE)
         if _pu_limits_cache["data"] is None or mtime != _pu_limits_cache["mtime"]:
-            with open(_PU_LIMITS_FILE, "r", encoding="utf-8") as f:
+            with open(_PU_LIMITS_FILE, encoding="utf-8") as f:
                 _pu_limits_cache["data"] = json.load(f)
             _pu_limits_cache["mtime"] = mtime
         data = _pu_limits_cache["data"]
@@ -194,10 +196,7 @@ class F1CosmosAPI:
             resp.raise_for_status()
             payload = resp.json()
             # 两种响应形态: {result, data:[...]} 或 {data:[...]}
-            if isinstance(payload, dict):
-                data = payload.get("data", payload)
-            else:
-                data = payload
+            data = payload.get("data", payload) if isinstance(payload, dict) else payload
         except requests.RequestException as e:
             logger.warning(f"[F1Cosmos] 请求失败 {endpoint}: {e}")
             return None
@@ -508,9 +507,7 @@ class F1CosmosAPI:
         for u in updates:
             c = _norm_gp(u.get("gp_city", ""))
             n = _norm_gp(u.get("gp_name", ""))
-            if city_n and c and city_n in c:
-                matched.append(u)
-            elif name_n and n and (name_n in n or n in name_n):
+            if city_n and c and city_n in c or name_n and n and (name_n in n or n in name_n):
                 matched.append(u)
         return matched
 
@@ -837,7 +834,7 @@ class F1CosmosAPI:
         prev: Dict[str, Dict] = {}
         if has_prev:
             try:
-                with open(snap_path, "r", encoding="utf-8") as f:
+                with open(snap_path, encoding="utf-8") as f:
                     prev = json.load(f)
             except Exception as e:
                 logger.warning(f"读取PU快照失败: {e}")

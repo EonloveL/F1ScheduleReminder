@@ -6,16 +6,17 @@ F1赛程提醒机器人 - QQ官方群聊版本
 API文档：https://bot.q.qq.com/wiki/develop/api/
 """
 
-import logging
 import json
+import logging
 import os
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
-import requests
 import time
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from .standings_format import parse_driver_standings, parse_constructor_standings
+import requests
+
 from .secret_guard import scrub_text
+from .standings_format import parse_constructor_standings, parse_driver_standings
 
 logger = logging.getLogger(__name__)
 
@@ -57,17 +58,17 @@ class QQGroupBot:
     QQ官方群聊机器人封装类
     支持：群消息发送、@全体成员
     """
-    
+
     # API基础URL
     API_BASE_URL = "https://api.sgroup.qq.com"
     SANDBOX_API_BASE_URL = "https://sandbox.api.sgroup.qq.com"
     TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
-    
+
     def __init__(self, appid: str, secret: str, group_id: str = None, use_sandbox: bool = False,
                  group_ids: list = None):
         """
         初始化QQ官方群聊机器人
-        
+
         Args:
             appid: QQ开放平台AppID
             secret: QQ开放平台AppSecret
@@ -93,25 +94,25 @@ class QQGroupBot:
         self._sent_order = []  # 记录插入顺序以便淘汰
         self._sent_dirty = False
         self._load_sent_cache()
-        
+
         # 设置API基础URL
         self.base_url = self.SANDBOX_API_BASE_URL if use_sandbox else self.API_BASE_URL
-        
+
         env_name = "沙箱环境" if use_sandbox else "正式环境"
         logger.info(f"✓ QQ官方群聊机器人初始化成功 [{env_name}]")
         logger.info(f"  - 目标群: {len(self.group_ids)} 个 {self.group_ids}")
-        
+
         # 立即获取一次token测试
         if self._get_access_token():
             logger.info("✓ Access Token获取成功")
         else:
             logger.warning("⚠️ Access Token获取失败，将在发送消息时重试")
-    
+
     @property
     def _current_group(self):
         """广播上下文中的当前群；非广播时为主群"""
         return getattr(self._tl, 'gid', None) or self.group_id
-    
+
     def _make_broadcast(fn):
         """包装公开发送方法：多群时遍历所有群发送；嵌套在广播内时直接单群执行"""
         import functools as _ft
@@ -132,7 +133,7 @@ class QQGroupBot:
                     self._tl.gid = None
             return ok_any
         return wrapped
-    
+
     def _get_access_token(self, force_refresh: bool = False) -> bool:
         """获取QQ Bot Access Token（加锁+双重检查，防多线程并发重复刷新）"""
         # 快速路径：token 有效（提前60秒视为过期）
@@ -181,16 +182,16 @@ class QQGroupBot:
             except Exception as e:
                 logger.error(f"获取Token异常: {e}")
                 return False
-    
+
     def send_group_message(self, content: str, at_all: bool = False, mentions: list = None) -> bool:
         """
         发送消息到QQ群
-        
+
         Args:
             content: 消息内容
             at_all: 是否@全体成员（需要机器人是群主或管理员）
             mentions: 要@的成员openid列表
-            
+
         Returns:
             发送是否成功
         """
@@ -200,7 +201,7 @@ class QQGroupBot:
             if not self._get_access_token():
                 logger.error("无法获取Access Token，发送失败")
                 return False
-            
+
             # 构建消息
             message_content = content
             if mentions:
@@ -208,13 +209,13 @@ class QQGroupBot:
                 message_content = f"{mention_prefix}\n{content}"
             if at_all:
                 message_content = f"@全体成员\n{content}"
-            
+
             # 构建请求
             headers = {
                 "Authorization": f"QQBot {self.access_token}",
                 "Content-Type": "application/json"
             }
-            
+
             # 构建消息体 - 简化版本
             # 注意：QQ群消息不支持 mentions 字段，只能通过文本@全体成员
             import random
@@ -223,10 +224,10 @@ class QQGroupBot:
                 "msg_type": 0,  # 文本消息
                 "msg_seq": random.randint(1, 1000000)  # 去重序号，必填
             }
-            
+
             logger.debug(f"发送消息到群 {self._current_group}")
             logger.debug(f"请求体: {message_data}")
-            
+
             # 发送群消息
             response = requests.post(
                 f"{self.base_url}/v2/groups/{self._current_group}/messages",
@@ -235,9 +236,9 @@ class QQGroupBot:
                 timeout=10,
                 proxies={"http": None, "https": None}
             )
-            
+
             logger.debug(f"发送消息响应: {response.status_code} - {response.text}")
-            
+
             if response.status_code == 200:
                 result = response.json()
                 if result.get("id") or result.get("code") == 0:
@@ -281,7 +282,7 @@ class QQGroupBot:
                     logger.error("  2. 配置的是普通群号，但QQ Bot API V2 需要使用 group_openid")
                     logger.error("     请查看上方日志中的群列表，使用 group_openid 替换 .env 中的 QQ_GROUP_ID")
                 return False
-            
+
         except requests.exceptions.Timeout:
             logger.error("发送消息超时")
             return False
@@ -291,7 +292,7 @@ class QQGroupBot:
         except Exception as e:
             logger.error(f"发送群消息异常: {e}")
             return False
-    
+
     # ==================== 引用消息内容查询（供AI会话引用机器人卡片/消息） ====================
 
     SENT_CACHE_MAX = 200  # 已发送消息缓存上限（超出淘汰最旧）
@@ -310,7 +311,7 @@ class QQGroupBot:
         if not os.path.exists(path):
             return
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 raw = json.load(f)
             now = _t.time()
             items = [(mid, v.get("c", ""), v.get("ts", 0)) for mid, v in raw.items()
@@ -405,7 +406,8 @@ class QQGroupBot:
         # 倒计时（pushplus版功能）
         countdown = ""
         try:
-            from datetime import datetime as _dt, timezone as _tzu
+            from datetime import datetime as _dt
+            from datetime import timezone as _tzu
             delta = utc_time - _dt.now(_tzu.utc)
             total_minutes = int(delta.total_seconds() // 60)
             if total_minutes > 0:
@@ -458,7 +460,7 @@ class QQGroupBot:
 
         ping = f"{icon} {session['race_name']}【{session['name']}】即将开始，详见上方卡片"
         return self._send_card(md, text, at_all=True, ping_text=ping)
-    
+
     def send_race_result(self, race_data: Dict[str, Any], results: Dict[str, Any],
                          lap_record_info: str = None, keyboard: Dict[str, Any] = None) -> bool:
         """发送比赛结果（md卡片优先，完整名次+车手头像+车队图标，可附内联键盘）"""
@@ -624,7 +626,7 @@ class QQGroupBot:
               f"📍 {circuit_name}\r\r"
               f"**📊 赛道信息**\r"
               + "\r".join(circuit_lines if circuit_lines else ["暂无赛道详细数据"])
-              + (f"\r🔎 圈速纪录已联网核实更新" if llm_verified else "")
+              + ("\r🔎 圈速纪录已联网核实更新" if llm_verified else "")
               + f"\r\r**⏰ 比赛时间**{schedule_md}\r\r"
               "🏎️💨 准备好享受速度与激情了吗？")
 
@@ -637,7 +639,7 @@ class QQGroupBot:
 将为您自动推送：
 🎉 每周一比赛周预告（含赛道信息）
 🏎️ 练习赛提醒
-⏱️ 排位赛提醒  
+⏱️ 排位赛提醒
 🏁 正赛提醒
 📊 赛后结果
 🎉 新圈速纪录即时播报
@@ -646,9 +648,9 @@ class QQGroupBot:
 
 ━━━━━━━━━━━━━━━
 Formula 1 🏎️💨"""
-        
+
         return self.send_group_message(message, at_all=False)
-    
+
     def send_test_message(self) -> bool:
         """发送测试消息"""
         message = f"""🧪 【测试消息】
@@ -657,9 +659,9 @@ Formula 1 🏎️💨"""
 
 当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 目标群: {self._current_group}"""
-        
+
         return self.send_group_message(message, at_all=False)
-    
+
     # ==================== 图片消息（富媒体） ====================
 
     def send_image_url(self, image_url: str, content: str = " ") -> bool:
@@ -1044,8 +1046,9 @@ Formula 1 🏎️💨"""
         Args:
             schedule: get_schedule() 返回的比赛列表
         """
-        from pytz import timezone as _tz
         from datetime import datetime as _dt
+
+        from pytz import timezone as _tz
         local_tz = _tz('Asia/Shanghai')
         now = _dt.now(local_tz)
 
@@ -1146,6 +1149,7 @@ Formula 1 🏎️💨"""
     def format_race_weather(result: Dict[str, Any]) -> tuple:
         """分站天气分析包 -> (纯文本, Markdown)。各环节双时区时间 + 天气/沥青/风速风向"""
         from datetime import datetime as _dt
+
         from pytz import timezone as _tz
         local_tz = _tz('Asia/Shanghai')
         weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
@@ -1210,7 +1214,7 @@ Formula 1 🏎️💨"""
     def send_personalized_standings(self, standings: Dict[str, Any], group_prefs: Dict[str, Dict[str, Any]]) -> bool:
         """
         按群成员偏好聚合发送个性化排名（一条消息@多人，节省主动消息额度）
-        
+
         Args:
             standings: get_current_standings() 返回的数据
             group_prefs: {member_openid: {"driver": id, "driver_name": str, "team": id, "team_name": str}}
@@ -1260,22 +1264,22 @@ Formula 1 🏎️💨"""
     def send_weekly_schedule_preview(self, sessions: List[Dict[str, Any]]) -> bool:
         """
         发送本周赛程预览
-        
+
         Args:
             sessions: 本周所有比赛环节
-            
+
         Returns:
             发送是否成功
         """
         if not sessions:
             return False
-        
+
         from pytz import timezone
         local_tz = timezone('Asia/Shanghai')
-        
+
         race_name = sessions[0]['race_name']
         circuit = sessions[0]['circuit']
-        
+
         text = f"""📅 【本周F1赛程预告】
 
 🏆 {race_name}

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """双平台指令一致性测试。
 
 QQ 侧 handlers 与 Discord 侧 slash commands 行为不应悄悄分叉。
@@ -6,7 +5,7 @@ QQ 侧 handlers 与 Discord 侧 slash commands 行为不应悄悄分叉。
 """
 import ast
 import os
-from typing import Dict, Set
+from typing import Set
 
 import pytest
 

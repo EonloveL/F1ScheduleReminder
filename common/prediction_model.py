@@ -514,7 +514,7 @@ class RacePredictionModel:
                     fq = f["form_quali"] if f["form_quali"] is not None else 20.0
                     ff = f["form_finish"] if f["form_finish"] is not None else 20.0
                     cq = f["circuit_hist_q"] or fq
-                    cf = f["circuit_hist"] or ff
+                    f["circuit_hist"] or ff
                     tq = f["tm_gap_quali"] if f["tm_gap_quali"] is not None else 0.0
                     tf = f["tm_gap_finish"] if f["tm_gap_finish"] is not None else 0.0
                     if e["quali_pos"] < 90:
@@ -672,6 +672,7 @@ class RacePredictionModel:
             premises: {"penalties": {车手名: 罚退位数}, "standins": {下车手: 代打车手}}
         """
         import re
+
         from .f1_api import find_race_by_circuit
 
         season = season or self.f1_api.season
@@ -799,7 +800,7 @@ class RacePredictionModel:
                 fq = 0.5 * fq + 0.5 * fpr
                 fp_note = fpr
             tq = f["tm_gap_quali"] if f.get("tm_gap_quali") is not None else 0.0
-            tf = f["tm_gap_finish"] if f.get("tm_gap_finish") is not None else 0.0
+            f["tm_gap_finish"] if f.get("tm_gap_finish") is not None else 0.0
             exp_q = (w[0] + w[1] * f["stand_pos"] + w[2] * fq
                      + w[3] * (f["circuit_hist_q"] or fq)
                      + w[4] * f["type_affinity"] + w[5] * up
@@ -889,7 +890,7 @@ class RacePredictionModel:
 
         # 正赛预测
         race_rows = []
-        for i, item in enumerate(pred_quali):
+        for item in pred_quali:
             f = feats[[x["driver"] for x in pred_quali].index(item["driver"])]
             fq = f["form_quali"] if f["form_quali"] is not None else 20.0
             ff = f["form_finish"] if f["form_finish"] is not None else 20.0
@@ -979,8 +980,9 @@ class RacePredictionModel:
         C. 模型概率层（回归+残差蒙特卡洛）：逐站用名次制回归期望 + race_resid_std 扰动
            采样名次→积分累加，回答"按本赛季实力推演概率多大"
         """
-        import numpy as np
         from datetime import datetime as _dt
+
+        import numpy as np
 
         season = season or self.f1_api.season
         today = _dt.now().date()

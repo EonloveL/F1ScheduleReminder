@@ -1,10 +1,9 @@
 """出网门禁（secret_guard）+ LLM 运行时管理指令（llm_admin/llm_secrets）测试"""
 import json
-import os
 
 import pytest
 
-from common import secret_guard, llm_secrets
+from common import llm_secrets, secret_guard
 from common.llm_admin import handle_llm_admin
 from common.llm_assistant import LLMAssistant
 

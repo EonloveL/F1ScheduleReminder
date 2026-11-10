@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """记忆持久化：三层结构 + JSON 后端（协议预留 SQLite 后端）
 
 数据结构（data/memory_store.json）：
@@ -22,7 +21,7 @@ import logging
 import os
 import threading
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +50,7 @@ class MemoryStore:
     def _load(self) -> Dict[str, Any]:
         if os.path.exists(self.file_path):
             try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
+                with open(self.file_path, encoding="utf-8") as f:
                     data = json.load(f)
                 if isinstance(data, dict) and isinstance(data.get("users"), dict):
                     return data

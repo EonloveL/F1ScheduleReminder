@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """指令处理：预测/Team Radio
 （/predict /tr——从 main.py 指令分发链原样迁移，行为零变化）"""
 import logging
@@ -87,7 +86,9 @@ async def handle_tr(ctx, message, arg, member_openid, is_dm):
         def _studio_render():
             import hashlib as _hl
             import uuid as _uu
+
             import requests as _rq
+
             from common.ratings_store import EXPORTS_DIR as _EXP
             _os.makedirs(_EXP, exist_ok=True)
             r = _rq.post(f"{studio_url}/text",

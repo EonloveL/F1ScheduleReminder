@@ -1,13 +1,14 @@
+# ruff: noqa: E402
 """
 F1赛程提醒机器人 - 群成员偏好存储
 保存每个群成员的主队/最喜爱车手设置，支持中英文模糊匹配
 """
 
 import json
-import os
 import logging
+import os
 import threading
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class UserPrefsStore:
     def _load(self) -> Dict[str, Any]:
         if os.path.exists(self.file_path):
             try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
+                with open(self.file_path, encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
                 logger.error(f"读取偏好文件失败: {e}")

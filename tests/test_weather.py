@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """天气功能回归测试（离线；monkeypatch 网络层）
 
 核心守护：逐环节时间窗时长——正赛 3h（覆盖 SC/红旗/雨战延迟）、排位 2h、
@@ -9,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from common.weather_api import WeatherAPI, estimate_track_temp, ASPHALT_MODEL
+from common.weather_api import ASPHALT_MODEL, WeatherAPI, estimate_track_temp
 
 
 def _race(dt):
@@ -242,7 +241,8 @@ class TestRequestParams:
 
             def raise_for_status(self):
                 if "models" in self.params or "minutely_15" in self.params:
-                    import requests as _rq; raise _rq.exceptions.HTTPError("400 Bad Request")
+                    import requests as _rq
+                    raise _rq.exceptions.HTTPError("400 Bad Request")
 
             def json(self):
                 return {"hourly": {"time": []}}

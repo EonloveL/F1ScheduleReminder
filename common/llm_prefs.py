@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """LLM 分层模型偏好（管理员 /model 指令）+ 供应商可用模型清单缓存。
 
 prefs: data/llm_prefs.json — {"layers": {"l2": {"provider": "kimi", "model": "kimi-k2.6"}}}

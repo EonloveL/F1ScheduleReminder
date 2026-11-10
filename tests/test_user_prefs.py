@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """user_prefs 全量单测：多关注 CRUD / 迁移 / 时区 / 新闻开关 / 模糊解析（离线，tmp 文件）"""
 import pytest
 

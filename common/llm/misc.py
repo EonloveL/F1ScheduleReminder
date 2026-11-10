@@ -2,7 +2,7 @@
 verify_lap_record / name_glossary / rules_anchor"""
 
 import logging
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 from ..drivers_profile import get_driver_en_map, get_team_en_map
 from .prompts import _load_prompt

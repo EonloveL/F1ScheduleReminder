@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# ruff: noqa: E402
 """指令处理器注册表（main.py 的 elif 分发链拆分为 handlers 包）。
 
 - HandlerContext：指令处理共享上下文（数据层对象 + main.py 配置常量 + 可变状态 +
@@ -33,7 +33,7 @@ class HandlerContext:
 
 # handlers 始终以包形式被导入（qq_group_official_version.handlers 或顶层 handlers），
 # 子模块内部自行处理 main.py 脚本直跑模式的导入回退（如 misc 的 ..replies → replies）
-from . import schedule, standings, charts, upgrades, prefs, predict, admin, misc
+from . import admin, charts, misc, predict, prefs, schedule, standings, upgrades
 
 COMMAND_HANDLERS = {}
 for _m in (schedule, standings, charts, upgrades, prefs, predict, admin, misc):

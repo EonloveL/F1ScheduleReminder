@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """敏感信息出网门禁（secret guard）
 
 三道防线：

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """指令处理：赛程/赛历/分站成绩/天气
 （/next /last /calendar /gp /weather——从 main.py 指令分发链原样迁移，行为零变化）"""
 import logging
@@ -123,6 +122,7 @@ async def handle_gp(ctx, message, arg, member_openid, is_dm):
 
     import asyncio as _aio
     from functools import partial as _partial
+
     from common.f1_api import find_race_by_circuit
     loop = _aio.get_running_loop()
     target_year = year or SEASON
@@ -155,7 +155,8 @@ async def handle_gp(ctx, message, arg, member_openid, is_dm):
 
     def _fetch_gp_summary():
         from concurrent.futures import ThreadPoolExecutor
-        from datetime import datetime as _dt3, timezone as _tz2
+        from datetime import datetime as _dt3
+        from datetime import timezone as _tz2
         sessions = f1_api.get_all_sessions(race)
         now_utc = _dt3.now(_tz2.utc)
         # 环节 datetime 可能为 None（f1api.dev 个别分站缺环节日期，
@@ -230,8 +231,9 @@ async def handle_weather(ctx, message, arg, member_openid, is_dm):
     await ctx.reply_md(message, text, md)
     # 天气时间序列图：已完赛=OpenF1 实测，未赛=Open-Meteo 逐小时预报
     try:
-        from common.chart_factory import render_weather_chart
         from functools import partial as _pw
+
+        from common.chart_factory import render_weather_chart
         p = await loop.run_in_executor(
             None, _pw(render_weather_chart, SEASON, int(race_obj["round"]),
                       race_obj.get("raceName", ""), f1_api=f1_api))

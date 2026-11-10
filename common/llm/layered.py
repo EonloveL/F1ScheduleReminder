@@ -3,12 +3,12 @@
 import json
 import logging
 import os
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
 
 import requests
 
 from .prompts import _load_prompt
-from .tracing import get_qid, set_qid, new_qid
+from .tracing import get_qid, new_qid, set_qid
 
 logger = logging.getLogger(__name__)
 
@@ -340,7 +340,7 @@ class LayeredMixin:
         失败静默回退原问题，不阻塞主流程。model: 层偏好覆盖（llm_prefs l0/l1）
         """
         try:
-            from datetime import datetime, timezone, timedelta
+            from datetime import datetime, timedelta, timezone
             now_cn = datetime.now(timezone(timedelta(hours=8)))
             system = (self._REWRITE_SYSTEM
                       + f"\n\n当前时间: {now_cn.strftime('%Y年%m月%d日 %H:%M')} (北京时间)")
@@ -543,8 +543,8 @@ class LayeredMixin:
                 qid = get_qid()
                 with _TPE(max_workers=min(4, len(valid_calls))) as pool:
                     results = list(pool.map(
-                        lambda c: self._execute_tool(c[0], json.dumps(c[1], ensure_ascii=False),
-                                                     fn_handlers, user_id=user_id, qid=qid),
+                        lambda c, _qid=qid: self._execute_tool(c[0], json.dumps(c[1], ensure_ascii=False),
+                                                               fn_handlers, user_id=user_id, qid=_qid),
                         valid_calls))
             else:
                 results = [self._execute_tool(c[0], json.dumps(c[1], ensure_ascii=False),
@@ -645,8 +645,8 @@ class LayeredMixin:
                 qid = get_qid()  # 子线程不继承 thread-local，显式传递
                 with _TPE(max_workers=min(4, len(data_calls))) as pool:
                     results = list(pool.map(
-                        lambda c: self._execute_tool(c[1], c[2], fn_handlers,
-                                                     user_id=user_id, qid=qid),
+                        lambda c, _qid=qid: self._execute_tool(c[1], c[2], fn_handlers,
+                                                               user_id=user_id, qid=_qid),
                         data_calls))
             else:
                 results = [self._execute_tool(c[1], c[2], fn_handlers, user_id=user_id)
@@ -746,12 +746,12 @@ class LayeredMixin:
             # 注入普通 function 形态的 web_search 工具，由客户端执行搜索回填
             p_tools, p_handlers = fn_tools, fn_handlers
             if not (self.available.get(provider) or {}).get("web_search", False):  # 热重载判空
-                from ..web_search import WEB_SEARCH_TOOL, web_search_handler, get_web_searcher
-                if get_web_searcher().enabled and fn_tools is not None:
-                    if not any((t.get("function") or {}).get("name") == "web_search" for t in fn_tools):
-                        p_tools = list(fn_tools) + [WEB_SEARCH_TOOL]
-                        p_handlers = dict(fn_handlers or {})
-                        p_handlers["web_search"] = web_search_handler
+                from ..web_search import WEB_SEARCH_TOOL, get_web_searcher, web_search_handler
+                if (get_web_searcher().enabled and fn_tools is not None
+                        and not any((t.get("function") or {}).get("name") == "web_search" for t in fn_tools)):
+                    p_tools = list(fn_tools) + [WEB_SEARCH_TOOL]
+                    p_handlers = dict(fn_handlers or {})
+                    p_handlers["web_search"] = web_search_handler
             answer = self._chat_once(provider, messages,
                                      fn_tools=p_tools, fn_handlers=p_handlers,
                                      audit_user=user_id, tools_log=tools_log,

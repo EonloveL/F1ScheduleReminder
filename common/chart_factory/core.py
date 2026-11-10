@@ -160,10 +160,10 @@ def _fetch_pace_laps(analyzer, season: int, round_num: int
             num_to_surname[n] = last
 
     drv_laps: Dict[int, Dict[int, tuple]] = defaultdict(dict)
-    for l in laps:
-        n, lp = l.get("driver_number"), l.get("lap_number")
+    for lap in laps:
+        n, lp = lap.get("driver_number"), lap.get("lap_number")
         if n and lp is not None:
-            drv_laps[n][lp] = (l.get("lap_duration"), bool(l.get("is_pit_out_lap")))
+            drv_laps[n][lp] = (lap.get("lap_duration"), bool(lap.get("is_pit_out_lap")))
 
     stints_by_drv: Dict[int, List[Dict]] = defaultdict(list)
     for s in stints:
@@ -246,7 +246,8 @@ def _openf1_session_key(analyzer, season: int, round_num: int,
             pass
     if not race_date:
         return None
-    from datetime import datetime as _dt, timedelta as _td
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
     try:
         d_race = _dt.strptime(race_date, "%Y-%m-%d")
     except Exception:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """OpenF1 实测天气链路测试（fake OpenF1API + 内存缓存，离线）
 
 守护 2026-10-30 两轮 review 修复：

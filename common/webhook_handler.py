@@ -11,7 +11,8 @@ import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict
-from flask import Flask, request, jsonify
+
+from flask import Flask, jsonify, request
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ class WebhookCrypto:
         self._private_key = Ed25519PrivateKey.from_private_bytes(seed_bytes)
         self._public_key = self._private_key.public_key()
         self._valid = True
-        logger.info(f"Ed25519 密钥对已生成 (seed 长度: 32)")
+        logger.info("Ed25519 密钥对已生成 (seed 长度: 32)")
 
     @property
     def valid(self) -> bool:
@@ -223,8 +224,9 @@ def register_webhook(app: Flask, webhook_secret: str, command_client, qq_bot=Non
 
     def _dispatch_event(event_type, event_data, event_id, author_id):
         """后台线程处理事件（不阻塞webhook响应，避免QQ超时重试）"""
-        import botpy
         import asyncio as _aio
+
+        import botpy
         http = botpy.http.BotHttp(timeout=10, app_id=_appid, secret=_secret_str)
         api = botpy.api.BotAPI(http=http)
         loop = _aio.new_event_loop()

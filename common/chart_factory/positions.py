@@ -2,11 +2,11 @@ import os
 from typing import Optional
 
 from .core import (
-    logger,
     EXPORTS_DIR,
-    _setup_dark_fig,
     _race_entries,
     _safe_int,
+    _setup_dark_fig,
+    logger,
 )
 
 

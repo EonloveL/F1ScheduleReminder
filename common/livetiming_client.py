@@ -110,7 +110,9 @@ class LiveTimingClient:
         """缓存 TTL：正赛日+1天前=30min（livetiming 归档赛中是持续更新的活文件，
         永久缓存会把赛中残缺 stint/事件数据冻结——2026-10-10 review 实证）；
         正赛日+1天后=永久（数据不可变）"""
-        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        from datetime import timezone as _tz
         rd = self._race_date(season, round_num)
         if not rd:
             return None
@@ -139,7 +141,8 @@ class LiveTimingClient:
                 return data or None
         # 分站未赛/目录名未中：正赛日前 3h 短缓存（赛后需尽快重试），正赛日后 24h
         rd = self._race_date(season, round_num)
-        from datetime import datetime as _dt, timezone as _tz
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
         short_ttl = 3 if rd and rd >= _dt.now(_tz.utc).date().isoformat() else 24
         self.cache.save(cache_key, {}, ttl_hours=short_ttl)
         return None

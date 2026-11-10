@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import re
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -73,9 +73,7 @@ class EngineMixin:
         # 有答案结构则不算前言
         if "##" in t or "\n-" in t or "\n•" in t or "\n🥇" in t or t.count("\n") >= 3:
             return False
-        if "：\n" in t or ":\n" in t:
-            return False
-        return True
+        return not ("：\n" in t or ":\n" in t)
 
     def _chat_once(self, provider: str, messages: List[Dict[str, Any]],
                    temperature: float = 0.3, timeout: int = None,
@@ -245,8 +243,8 @@ class EngineMixin:
                     qid = get_qid()  # 子线程不继承 thread-local，显式传递
                     with _TPE(max_workers=min(4, len(fn_jobs))) as pool:
                         outs = list(pool.map(
-                            lambda j: self._execute_tool(j[2], j[3], fn_handlers or {},
-                                                         user_id=audit_user, qid=qid),
+                            lambda j, _qid=qid: self._execute_tool(j[2], j[3], fn_handlers or {},
+                                                                   user_id=audit_user, qid=_qid),
                             fn_jobs))
                 else:
                     outs = [self._execute_tool(j[2], j[3], fn_handlers or {}, user_id=audit_user)
@@ -356,6 +354,7 @@ class EngineMixin:
                       user_id: str = None, qid: str = None) -> str:
         """执行自定义函数工具，返回 JSON 字符串结果；每次调用写入审计日志"""
         import time as _t
+
         from ..llm_audit import LLMToolAudit
         qid = qid or get_qid()  # 并行线程中 thread-local 不继承，由调用方显式传入
         audit = LLMToolAudit.get()
@@ -376,10 +375,7 @@ class EngineMixin:
                 _warn = result.get("sc_warning")
                 if _warn:
                     self._sc_notices[qid] = _warn
-            if isinstance(result, str):
-                out = result
-            else:
-                out = json.dumps(result, ensure_ascii=False)
+            out = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
             # 工具返回业务错误（{"error": ...}）也计入失败，便于追溯
             biz_error = result.get("error") if isinstance(result, dict) else None
             audit.record(name, args, duration_ms=int((_t.time() - t0) * 1000),

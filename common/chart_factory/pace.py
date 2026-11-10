@@ -2,14 +2,13 @@ import os
 from typing import Optional
 
 from .core import (
-    logger,
-    EXPORTS_DIR,
     CHART_VER,
-    COMPOUND_COLORS,
     COMPOUND_CN,
-    _setup_dark_fig,
+    COMPOUND_COLORS,
+    EXPORTS_DIR,
     _boxplot_compat,
     _fetch_pace_laps,
+    logger,
 )
 
 
@@ -39,6 +38,7 @@ def render_pace_chart(season: int, round_num: int, race_name: str = "",
     matplotlib.use("Agg")
     import numpy as np
     from matplotlib import pyplot as plt
+
     from .core import _pick_cjk_font
     _pick_cjk_font()
 
@@ -59,12 +59,12 @@ def render_pace_chart(season: int, round_num: int, race_name: str = "",
     ax.set_facecolor("#1a1d26")
 
     # 箱线图
-    bp = _boxplot_compat(ax, data, horizontal=False, positions=range(len(names)),
+    _boxplot_compat(ax, data, horizontal=False, positions=range(len(names)),
                     widths=0.55, patch_artist=True, showfliers=False,
-                    medianprops=dict(color="#ff8c00", linewidth=2),
-                    whiskerprops=dict(color="#cccccc", linewidth=1),
-                    capprops=dict(color="#cccccc"),
-                    boxprops=dict(facecolor="#2a2e3d", edgecolor="#cccccc", alpha=0.8))
+                    medianprops={"color": "#ff8c00", "linewidth": 2},
+                    whiskerprops={"color": "#cccccc", "linewidth": 1},
+                    capprops={"color": "#cccccc"},
+                    boxprops={"facecolor": "#2a2e3d", "edgecolor": "#cccccc", "alpha": 0.8})
     # 散点按配方着色
     rng = np.random.default_rng(42)
     for i, surname in enumerate(names):

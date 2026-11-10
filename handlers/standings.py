@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """指令处理：积分榜/评分
 （/drivers /teams /dotd /ratings /rate——从 main.py 指令分发链原样迁移，行为零变化）"""
 import logging
@@ -83,9 +82,10 @@ async def handle_ratings(ctx, message, arg, member_openid, is_dm):
     race_key = None
     if arg:
         # 按地点找场次
-        from common.f1_api import find_race_by_circuit
         import asyncio as _a2
         from functools import partial as _p2
+
+        from common.f1_api import find_race_by_circuit
         loop2 = _a2.get_running_loop()
         schedule = await loop2.run_in_executor(None, _p2(ctx.f1_api.get_schedule_for_year, SEASON))
         race_hit = find_race_by_circuit(schedule, arg) if schedule else None
@@ -140,7 +140,8 @@ async def handle_rate(ctx, message, arg, member_openid, is_dm):
     # 优先指向"已开放投票"的最高 round 场次，全部未开放才给最新 pending
     # （2026-09-28 review 实证：/rate 取最后一条会锚定下一场 pending，
     # 整场投票窗口用户拿到的都是"尚未开启"的下周表单）
-    from datetime import datetime as _dt4, timezone as _tz4
+    from datetime import datetime as _dt4
+    from datetime import timezone as _tz4
     _now4 = _dt4.now(_tz4.utc)
     def _is_pending(race_entry):
         _oa = ratings_store.race_open_at(race_entry)
@@ -155,6 +156,7 @@ async def handle_rate(ctx, message, arg, member_openid, is_dm):
     pending_tip = ""
     try:
         from datetime import datetime, timezone
+
         from pytz import timezone as _ptz
         _oa = ratings_store.race_open_at(race)
         if _oa and datetime.now(timezone.utc) < _oa:

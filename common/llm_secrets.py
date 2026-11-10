@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """LLM 运行时配置（管理员私聊配置的服务商密钥/优先顺序）
 
 存储：data/llm_secrets.json

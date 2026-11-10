@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """指令处理：管理员
 （/models /model /llm /kb /bili_login——从 main.py 指令分发链原样迁移，行为零变化）"""
 import logging
@@ -16,9 +15,11 @@ async def _handle_model_impl(ctx, message, arg, member_openid, cmd):
         await ctx.reply_text(message, "💡 LLM 未启用（未配置任何供应商 KEY）")
     else:
         llm = ctx.llm
-        from common.llm_prefs import (all_layers as _lp_all, set_layer as _lp_set,
-                                      reset_layer as _lp_reset, LAYERS as _LP_LAYERS,
-                                      LAYER_NAMES_CN as _LP_CN)
+        from common.llm_prefs import LAYER_NAMES_CN as _LP_CN
+        from common.llm_prefs import LAYERS as _LP_LAYERS
+        from common.llm_prefs import all_layers as _lp_all
+        from common.llm_prefs import reset_layer as _lp_reset
+        from common.llm_prefs import set_layer as _lp_set
         a = (arg or "").strip()
         import asyncio as _aio
         loop = _aio.get_running_loop()
@@ -174,8 +175,9 @@ async def handle_bili_login(ctx, message, arg, member_openid, is_dm):
                 await ctx.reply_text(message, "⚠️ 二维码生成失败，请稍后重试")
                 return
             import os as _os
-            import time as _t
             import threading as _th
+            import time as _t
+
             from common.ratings_store import EXPORTS_DIR as _EXP
             fname = f"bili_qr_{int(_t.time())}.png"
             fpath = _os.path.join(_EXP, fname)

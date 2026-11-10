@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """稀疏注意力式会话记忆 — MemoryFacade（对 llm_assistant 的唯一接口）
 
 设计：三层记忆 + 打分召回（score = 衰减 × 相关性 × 显著性），替代旧的
@@ -96,7 +95,7 @@ class MemoryFacade:
             if s >= scoring.THRESHOLD_L2:
                 eps.append((s, ep))
         eps.sort(key=lambda x: -x[0])
-        for s, ep in eps[:scoring.MAX_INJECT_L2]:
+        for _, ep in eps[:scoring.MAX_INJECT_L2]:
             age = self._age_str(now - ep.get("ts_end", 0))
             ep_lines.append(f"· [{age}] {ep.get('topic', '')}：{ep.get('summary', '')}")
 

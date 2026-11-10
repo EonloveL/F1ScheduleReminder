@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """指令处理：个性化偏好
 （/setdriver /setteam /me /unbind /news——从 main.py 指令分发链原样迁移，行为零变化）"""
 import logging

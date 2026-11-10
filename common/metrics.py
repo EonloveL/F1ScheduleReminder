@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """轻量指标计数：进程内计数器 + 定期落盘 data/metrics.json（重启不清零）。
 单进程多线程（webhook Flask threaded + APScheduler + 指令线程），写入走锁+原子写。
 约束：单写者进程（仅 f1-qqbot bot 容器写此文件；web/live 容器不 import 本模块，

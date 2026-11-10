@@ -2,15 +2,15 @@ import os
 from typing import Optional
 
 from .core import (
-    logger,
-    EXPORTS_DIR,
     CHART_VER,
-    COMPOUND_COLORS,
     COMPOUND_CN,
-    _setup_dark_fig,
+    COMPOUND_COLORS,
+    EXPORTS_DIR,
     _race_entries,
-    _strategy_stints,
     _safe_int,
+    _setup_dark_fig,
+    _strategy_stints,
+    logger,
 )
 
 

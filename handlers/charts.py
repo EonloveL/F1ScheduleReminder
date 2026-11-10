@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """指令处理：统计图表/技术数据
 （/pace /racechart /trend /qualigap /pitstops /sc /car /pu——从 main.py 指令分发链原样迁移，行为零变化）"""
 import logging
@@ -14,9 +13,10 @@ async def handle_pace(ctx, message, arg, member_openid, is_dm):
     loop = _aio.get_running_loop()
 
     def _gen_pace():
+        from datetime import datetime as _dtx
+
         from common.chart_factory import render_pace_chart
         from common.f1_api import find_race_by_circuit
-        from datetime import datetime as _dtx
         schedule = f1_api.get_schedule_for_year(SEASON) or []
         race = None
         if arg:
@@ -69,9 +69,10 @@ async def handle_racechart(ctx, message, arg, member_openid, is_dm):
     loop = _aio.get_running_loop()
 
     def _gen_report():
+        from datetime import datetime as _dtx
+
         from common.chart_factory import render_race_report_chart
         from common.f1_api import find_race_by_circuit
-        from datetime import datetime as _dtx
         schedule = f1_api.get_schedule_for_year(SEASON) or []
         race = None
         if arg:
@@ -145,9 +146,10 @@ async def handle_qualigap(ctx, message, arg, member_openid, is_dm):
     loop = _aio.get_running_loop()
 
     def _gen_qg():
+        from datetime import datetime as _dtx
+
         from common.chart_factory import render_quali_gap_chart
         from common.f1_api import find_race_by_circuit
-        from datetime import datetime as _dtx
         q = (arg or "").strip()
         stype = "qualifying"
         if q.lower() == "sq":
@@ -212,9 +214,10 @@ async def handle_pitstops(ctx, message, arg, member_openid, is_dm):
     loop = _aio.get_running_loop()
 
     def _gen_pit():
+        from datetime import datetime as _dtx
+
         from common.chart_factory import render_pitstop_chart
         from common.f1_api import find_race_by_circuit
-        from datetime import datetime as _dtx
         schedule = f1_api.get_schedule_for_year(SEASON) or []
         race = None
         if arg:
@@ -268,9 +271,10 @@ async def handle_sc(ctx, message, arg, member_openid, is_dm):
     loop = _aio.get_running_loop()
 
     def _gen_sc():
+        from datetime import datetime as _dtx
+
         from common.chart_factory import render_sc_timeline
         from common.f1_api import find_race_by_circuit
-        from datetime import datetime as _dtx
         schedule = f1_api.get_schedule_for_year(SEASON) or []
         race = None
         if arg:

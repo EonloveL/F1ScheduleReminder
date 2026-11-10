@@ -306,7 +306,7 @@ class WeatherAPI:
             out["precip_probability_max"] = max(pp)
             # 降水ETA：第一个降水概率>=40%或有小雨+天气码的小时
             rain_i = None
-            for j, i in enumerate(idx):
+            for _j, i in enumerate(idx):
                 p = hourly["precipitation_probability"][i] if i < len(hourly["precipitation_probability"]) else None
                 c = hourly["weather_code"][i] if i < len(hourly["weather_code"]) else None
                 if (p is not None and p >= 40) or (c is not None and c >= 51):
@@ -468,18 +468,16 @@ class WeatherAPI:
             now = datetime.now(timezone.utc)
             end_dt = _parse_dt(session.get("date_end"))
             start_dt = _parse_dt(session.get("date_start"))
-            if end_dt:
+            if end_dt and end_dt + timedelta(minutes=10) > now:
                 # 加 10 分钟宽限：date_end 是计划时间，红旗/雨战可能顺延
-                if end_dt + timedelta(minutes=10) > now:
-                    if self.cache:
-                        self.cache.save(neg_key, True, ttl_hours=0.3)  # 进行中短负缓存，防反复重拉
-                    return None
-            elif start_dt:
+                if self.cache:
+                    self.cache.save(neg_key, True, ttl_hours=0.3)  # 进行中短负缓存，防反复重拉
+                return None
+            elif start_dt and (now - start_dt) < timedelta(hours=2):
                 # 无 date_end 或解析失败：按环节典型时长兜底要求已开始 ≥2h
-                if (now - start_dt) < timedelta(hours=2):
-                    if self.cache:
-                        self.cache.save(neg_key, True, ttl_hours=0.3)
-                    return None
+                if self.cache:
+                    self.cache.save(neg_key, True, ttl_hours=0.3)
+                return None
             series = api._make_request("weather", {"session_key": session["session_key"]})
             if not series:
                 if self.cache:

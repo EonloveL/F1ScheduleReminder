@@ -2,12 +2,12 @@
 
 import logging
 import os
-from typing import Optional, Dict, Any, List
+from typing import List, Optional
 
 import requests
 
 from .prompts import _load_prompt
-from .tracing import get_qid, set_qid, new_qid
+from .tracing import get_qid, new_qid, set_qid
 
 logger = logging.getLogger(__name__)
 

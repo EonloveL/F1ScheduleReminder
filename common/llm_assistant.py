@@ -22,15 +22,15 @@ import json
 import logging
 import re
 import threading as _threading
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
 
-from .llm.tracing import new_qid, set_qid, get_qid, QIDLogFilter
-from .llm.prompts import _load_prompt
-from .llm.providers import PROVIDERS, DEFAULT_ASK_ORDER, TRANSLATE_ORDER, ProvidersMixin
 from .llm.engine import EngineMixin
 from .llm.layered import LayeredMixin
-from .llm.vision import VisionMixin
 from .llm.misc import MiscMixin
+from .llm.prompts import _load_prompt
+from .llm.providers import PROVIDERS  # noqa: F401  公开常量，供测试/外部引用
+from .llm.providers import ProvidersMixin
+from .llm.vision import VisionMixin
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,7 @@ class LLMAssistant(ProvidersMixin, EngineMixin, LayeredMixin, VisionMixin, MiscM
 
         # 三层会话记忆（common/memory，稀疏注意力式召回）
         import threading
+
         from .memory import MemoryFacade
         self._memory = MemoryFacade(llm=self)
         self._conv_lock = threading.Lock()

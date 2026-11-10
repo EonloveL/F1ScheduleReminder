@@ -1,8 +1,7 @@
-# -*- coding: utf-8 -*-
 """TR 卡片（/tr 指令）离线单测"""
 import os
 
-from common.tr_card import render_tr_card, resolve_tr_driver, _DRIVERS
+from common.tr_card import _DRIVERS, render_tr_card, resolve_tr_driver
 
 
 class TestResolve:

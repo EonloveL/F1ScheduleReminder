@@ -82,7 +82,7 @@ class CircuitsManager:
     def _load_data(self) -> Dict:
         try:
             if os.path.exists(self.data_file):
-                with open(self.data_file, 'r', encoding='utf-8') as f:
+                with open(self.data_file, encoding='utf-8') as f:
                     return json.load(f)
         except Exception as e:
             logger.error(f"加载赛道数据失败: {e}")

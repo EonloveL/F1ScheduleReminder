@@ -62,7 +62,7 @@ class KnowledgeStore:
     def _load_json(path: str, default):
         if os.path.exists(path):
             try:
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
                 logger.error(f"读取知识存储失败 {os.path.basename(path)}: {e}")
@@ -118,7 +118,7 @@ class KnowledgeStore:
         cutoff = time.time() - days * 86400
         out = []
         try:
-            with open(QA_ARCHIVE_FILE, "r", encoding="utf-8") as f:
+            with open(QA_ARCHIVE_FILE, encoding="utf-8") as f:
                 for line in f:
                     try:
                         e = json.loads(line)

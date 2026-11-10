@@ -5,9 +5,10 @@ F1车手评分 - 统计图表生成（matplotlib）
 
 import logging
 import os
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
@@ -75,7 +76,7 @@ def render_ratings_chart(race_name: str, board: List[Dict[str, Any]],
         for spine in ax.spines.values():
             spine.set_visible(False)
 
-        for i, (bar, avg, cnt) in enumerate(zip(bars, avgs, counts)):
+        for i, (_bar, avg, cnt) in enumerate(zip(bars, avgs, counts)):
             ax.text(avg + 0.08, i, f"{avg} ({cnt}票)", va="center", color="#ffd166", fontsize=9)
 
         title = f"{race_name} · 群友评分"

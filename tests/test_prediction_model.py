@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """预测模型单测
 
 - 纯函数：_median / _safe_int / _sc_strength

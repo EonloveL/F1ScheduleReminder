@@ -5,17 +5,17 @@ API文档: https://openf1.org
 注意: 仅支持2023年及以后的数据
 """
 
-import requests
-from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Any
 import logging
+import os
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+
+import requests
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.openf1.org/v1"
 TOKEN_URL = "https://api.openf1.org/token"
-
-import os
 
 
 class OpenF1API:
@@ -63,14 +63,14 @@ class OpenF1API:
         except requests.RequestException as e:
             logger.error(f"[OpenF1] 请求失败: {url}, 错误: {e}")
             return None
-    
+
     def get_meetings(self, year: int = None) -> List[Dict[str, Any]]:
         """
         获取赛事会议列表
-        
+
         Args:
             year: 年份，默认当前年份
-            
+
         Returns:
             赛事会议列表
         """
@@ -78,15 +78,15 @@ class OpenF1API:
         params = {"year": year}
         data = self._make_request("meetings", params)
         return data if data else []
-    
+
     def get_sessions(self, meeting_key: int = None, year: int = None) -> List[Dict[str, Any]]:
         """
         获取赛事会话列表
-        
+
         Args:
             meeting_key: 会议唯一标识
             year: 年份
-            
+
         Returns:
             会话列表
         """
@@ -95,59 +95,59 @@ class OpenF1API:
             params["meeting_key"] = meeting_key
         if year:
             params["year"] = year
-            
+
         data = self._make_request("sessions", params)
         return data if data else []
-    
+
     def get_weather(self, session_key: int) -> Optional[Dict[str, Any]]:
         """
         获取赛事天气数据（适合赛前推送）
-        
+
         Args:
             session_key: 会话唯一标识
-            
+
         Returns:
             最新天气数据
         """
         params = {"session_key": session_key}
         data = self._make_request("weather", params)
-        
+
         if not data:
             return None
-        
+
         # 返回最新的天气数据
         return data[-1] if data else None
-    
+
     def get_race_control(self, session_key: int) -> List[Dict[str, Any]]:
         """
         获取赛事控制事件（适合赛中推送）
-        
+
         Args:
             session_key: 会话唯一标识
-            
+
         Returns:
             赛事控制事件列表（旗帜、安全车等）
         """
         params = {"session_key": session_key}
         data = self._make_request("race_control", params)
         return data if data else []
-    
-    def get_latest_race_control_events(self, session_key: int, 
+
+    def get_latest_race_control_events(self, session_key: int,
                                        minutes: int = 5) -> List[Dict[str, Any]]:
         """
         获取最近N分钟的赛事控制事件
-        
+
         Args:
             session_key: 会话唯一标识
             minutes: 最近多少分钟，默认5分钟
-            
+
         Returns:
             最近的赛事控制事件
         """
         events = self.get_race_control(session_key)
         if not events:
             return []
-        
+
         # 计算时间阈值（event_time 为 aware UTC，now 必须同为 aware，否则比较抛 TypeError）
         now = datetime.now(timezone.utc)
         threshold = now - timedelta(minutes=minutes)
@@ -161,48 +161,48 @@ class OpenF1API:
                     recent_events.append(event)
             except (TypeError, ValueError):
                 continue
-        
+
         return recent_events
-    
+
     def get_fastest_lap(self, session_key: int) -> Optional[Dict[str, Any]]:
         """
         获取当前最快圈速（适合赛中/赛后推送）
-        
+
         Args:
             session_key: 会话唯一标识
-            
+
         Returns:
             最快圈速信息
         """
         params = {"session_key": session_key}
         data = self._make_request("laps", params)
-        
+
         if not data:
             return None
-        
+
         # 找到最快圈
         fastest_lap = None
         for lap in data:
             lap_time = lap.get("lap_duration")
             if lap_time and (not fastest_lap or lap_time < fastest_lap["lap_duration"]):
                 fastest_lap = lap
-        
+
         return fastest_lap
-    
+
     def get_pit_stops(self, session_key: int) -> List[Dict[str, Any]]:
         """
         获取进站数据（适合赛后分析）
-        
+
         Args:
             session_key: 会话唯一标识
-            
+
         Returns:
             进站数据列表
         """
         params = {"session_key": session_key}
         data = self._make_request("pit", params)
         return data if data else []
-    
+
     def get_latest_session_key(self) -> Optional[int]:
         """
         获取最新的会话标识符
@@ -372,10 +372,7 @@ class OpenF1API:
             emoji = flag_emojis.get(flag, "")
             return f"{emoji} {message}"
 
-        elif category == "SafetyCar":
-            return f" {message}"
-
-        elif category == "CarEvent":
+        elif category == "SafetyCar" or category == "CarEvent":
             return f" {message}"
 
         else:
@@ -551,24 +548,24 @@ if __name__ == "__main__":
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    
+
     from datetime import datetime
     current_year = datetime.now().year
-    
+
     print("=" * 60)
     print("OpenF1 API 测试")
     print(f"当前年份: {current_year}")
     print("=" * 60)
-    
+
     api = OpenF1API()
-    
+
     # 测试1: 获取当前赛季会议
     print(f"\n1. 获取{current_year}赛季会议...")
     meetings = api.get_meetings(current_year)
     print(f"   共 {len(meetings)} 个会议")
     if meetings:
         print(f"   首场比赛: {meetings[0]['meeting_name']}")
-    
+
     # 测试2: 获取会话
     if meetings:
         print("\n2. 获取会话列表...")
@@ -578,7 +575,7 @@ if __name__ == "__main__":
         if sessions:
             print(f"   首个会话: {sessions[0]['session_name']}")
             session_key = sessions[0]["session_key"]
-            
+
             # 测试3: 获取天气
             print("\n3. 获取天气数据...")
             weather = api.get_weather(session_key)
@@ -590,7 +587,7 @@ if __name__ == "__main__":
                 print(api.format_weather_for_chat(weather))
             else:
                 print("   暂无天气数据")
-    
+
     print("\n" + "=" * 60)
     print("测试完成!")
     print("=" * 60)

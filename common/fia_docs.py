@@ -20,10 +20,8 @@ import unicodedata
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import requests
-
-from .f1cosmos_api import F1CosmosAPI, UPGRADES_MIN_YEAR
 from .drivers_profile import get_known_driver_names
+from .f1cosmos_api import UPGRADES_MIN_YEAR, F1CosmosAPI
 
 logger = logging.getLogger(__name__)
 
@@ -407,7 +405,7 @@ class FIADocsAPI(F1CosmosAPI):
                     if not col_order:
                         continue
                     n = len(col_order)
-                    m = re.match(r"^(\d{1,2})\s+(.+?)\s+((?:\d+\s+){%d}\d+)\s*$" % (n - 1),
+                    m = re.match(rf"^(\d{{1,2}})\s+(.+?)\s+((?:\d+\s+){{{n - 1}}}\d+)\s*$",
                                  line)
                     if not m:
                         continue
@@ -522,10 +520,9 @@ class FIADocsAPI(F1CosmosAPI):
             if top >= table_top:
                 continue
             if TEAM_HEADER_RE.search(text) and len(text) < 60 \
-                    and not text[0].isdigit():
-                if top > best_top:
-                    best_top = top
-                    best = text
+                    and not text[0].isdigit() and top > best_top:
+                best_top = top
+                best = text
         # 清理PDF装饰字符（加粗星号/结尾句号等）
         return best.strip("*. ").strip()
 
@@ -736,7 +733,7 @@ class FIADocsAPI(F1CosmosAPI):
             schedule = self.schedule_provider(season) or []
         except Exception:
             return ""
-        from datetime import datetime, timedelta
+        from datetime import timedelta
         today = datetime.now().date()
         last_past = None
         for race in sorted(schedule, key=lambda r: r.get("date") or ""):

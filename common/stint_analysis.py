@@ -178,12 +178,12 @@ class StintAnalyzer:
 
         # 圈速：{driver_number: {lap_number: (duration_s, is_pit_out_lap)}}
         drv_laps: Dict[int, Dict[int, tuple]] = defaultdict(dict)
-        for l in laps:
-            n = l.get("driver_number")
-            lp = l.get("lap_number")
+        for lap in laps:
+            n = lap.get("driver_number")
+            lp = lap.get("lap_number")
             if not n or lp is None:
                 continue
-            drv_laps[n][lp] = (l.get("lap_duration"), bool(l.get("is_pit_out_lap")))
+            drv_laps[n][lp] = (lap.get("lap_duration"), bool(lap.get("is_pit_out_lap")))
 
         # 按车手组织 stints
         stints_by_drv: Dict[int, List[Dict]] = defaultdict(list)
@@ -333,7 +333,7 @@ class StintAnalyzer:
                 all_items.extend(items)
                 total = int(data.get("total", 0) or 0)
                 # laps 分页按计时条数计：本页实际条数 < limit 说明已到最后一页
-                page_count = sum(len(l.get("Timings", []) or []) for l in items) \
+                page_count = sum(len(it.get("Timings", []) or []) for it in items) \
                     if items and "Timings" in (items[0] or {}) else len(items)
                 offset += page_count or page_size
                 if offset >= total or not items:

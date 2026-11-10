@@ -11,11 +11,11 @@ F1赛程提醒机器人 - 客户端联网搜索（为无内建联网能力的供
 - 通用覆盖：SEARCH_PROVIDER=tavily|bocha + SEARCH_API_KEY=...
 """
 
-import json
 import logging
 import os
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
+
 import requests
 
 logger = logging.getLogger(__name__)

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """全指令分发链路冒烟测试：真实走 on_group_at_message_create（含闭包/胶水层），
 回复函数替换为记录器，数据层走真实缓存+网络。
 
@@ -17,8 +16,8 @@ except ImportError:
     import main as m  # OSS 仓布局（根目录 main.py）
 from common.f1_api import F1API
 from common.fia_docs import FIADocsAPI
-from common.user_prefs import UserPrefsStore
 from common.ratings_store import RatingsStore
+from common.user_prefs import UserPrefsStore
 
 SENT = []
 
@@ -118,8 +117,8 @@ def handler():
     return cls.on_group_at_message_create
 
 
-@pytest.mark.parametrize("cmdline,expect", [(c, e) for c, e in CASES.items()],
-                         ids=[c for c in CASES])
+@pytest.mark.parametrize("cmdline,expect", list(CASES.items()),
+                         ids=list(CASES))
 def test_command(handler, cmdline, expect):
     SENT.clear()
     asyncio.run(asyncio.wait_for(handler(None, _FakeMessage(cmdline)), timeout=600))

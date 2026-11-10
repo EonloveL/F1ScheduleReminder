@@ -2,18 +2,18 @@ import os
 from typing import Optional
 
 from .core import (
-    logger,
-    EXPORTS_DIR,
     CHART_VER,
-    COMPOUND_COLORS,
     COMPOUND_CN,
-    _setup_dark_fig,
-    _style_ax,
+    COMPOUND_COLORS,
+    EXPORTS_DIR,
     _boxplot_compat,
     _fetch_pace_laps,
     _race_entries,
-    _strategy_stints,
     _safe_int,
+    _setup_dark_fig,
+    _strategy_stints,
+    _style_ax,
+    logger,
 )
 
 
@@ -57,12 +57,12 @@ def render_race_report_chart(season: int, round_num: int, race_name: str = "",
     names = [s for s, _, _ in stats]
     data = [sd for _, sd, _ in stats]
     laps_by = {s: lp for s, _, lp in stats}
-    bp = _boxplot_compat(ax1, data, horizontal=False, positions=range(len(names)), widths=0.55,
+    _boxplot_compat(ax1, data, horizontal=False, positions=range(len(names)), widths=0.55,
                 patch_artist=True, showfliers=False,
-                medianprops=dict(color="#ff8c00", linewidth=2),
-                whiskerprops=dict(color="#cccccc", linewidth=1),
-                capprops=dict(color="#cccccc"),
-                boxprops=dict(facecolor="#2a2e3d", edgecolor="#cccccc", alpha=0.8))
+                medianprops={"color": "#ff8c00", "linewidth": 2},
+                whiskerprops={"color": "#cccccc", "linewidth": 1},
+                capprops={"color": "#cccccc"},
+                boxprops={"facecolor": "#2a2e3d", "edgecolor": "#cccccc", "alpha": 0.8})
     rng = np.random.default_rng(42)
     for i, surname in enumerate(names):
         for v, comp in laps_by[surname]:

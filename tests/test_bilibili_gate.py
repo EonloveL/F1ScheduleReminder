@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """B站视频导读：链接解析与 F1 门禁（离线单测）"""
 from common.bilibili_summary import BiliVideoClient
 

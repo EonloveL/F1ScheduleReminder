@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """LLM 运行时管理指令（管理员私聊专属，QQ/Discord 双平台共享）
 
 指令族（arg 为 /llm 后的文本）：
@@ -15,7 +14,6 @@
 - 调用方负责：管理员校验 + 私聊通道校验（群聊必须拒绝，防 key 留在群消息记录）
 """
 import logging
-from typing import Any, Optional
 
 from . import llm_secrets
 from .secret_guard import mask_secret

@@ -3,14 +3,14 @@ F1赛程提醒机器人 - 共用核心模块
 定时任务调度器 - 使用 APScheduler 实现定时提醒任务
 """
 
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.date import DateTrigger
-from apscheduler.triggers.cron import CronTrigger
-from datetime import datetime, timedelta
-from pytz import timezone
 import logging
-from typing import Dict, Any, List, Callable
-import functools
+from datetime import datetime, timedelta
+from typing import Any, Dict, List
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
+from pytz import timezone
 
 from .user_prefs import UserPrefsStore
 
@@ -50,11 +50,11 @@ def _standings_keyboard():
 
 class ReminderScheduler:
     """F1提醒任务调度器"""
-    
+
     def __init__(self, f1_api, notify_bot, config: Dict[str, Any]):
         """
         初始化调度器
-        
+
         Args:
             f1_api: F1API实例
             notify_bot: 消息机器人实例（WeComBot/PushPlusBot/WeChatBot）
@@ -63,24 +63,24 @@ class ReminderScheduler:
         self.f1_api = f1_api
         self.notify_bot = notify_bot
         self.config = config
-        
+
         # 创建后台调度器
         self.scheduler = BackgroundScheduler()
-        
+
         # 时区
         self.local_tz = timezone(config.get('TIMEZONE', 'Asia/Shanghai'))
-        
+
         # 已调度的任务（避免重复调度）
         self.scheduled_jobs = {}
-        
+
     def start(self):
         """启动调度器"""
         self.scheduler.start()
         logger.info("定时任务调度器已启动")
-        
+
         # 立即更新赛程任务
         self.update_schedule_jobs()
-        
+
         # 注册年度数据清理任务
         self.add_yearly_cleanup_job()
 
@@ -97,8 +97,9 @@ class ReminderScheduler:
 
     def _daily_selfcheck(self):
         """自检：全绿只记日志，有异常 DM 管理员（20h 去重）"""
-        from .admin_alert import alert_admin
         import requests as _req
+
+        from .admin_alert import alert_admin
         problems = []
         season = self.config.get('SEASON') or datetime.now().year
         from .f1_api import F1APIDevProvider, JolpicaProvider
@@ -144,7 +145,8 @@ class ReminderScheduler:
                                "data", "selfcheck_state.json")
             prev = {}
             if _os.path.exists(sp):
-                prev = _json.load(open(sp, encoding="utf-8"))
+                with open(sp, encoding="utf-8") as f:
+                    prev = _json.load(f)
             keys = ("command_error", "api_all_failed", "llm_answer_fail", "llm_answer_timeout")
             new_errors = sum(max(0, counters.get(k, 0) - (prev.get(k) or 0)) for k in keys)
             tmp = sp + ".tmp"
@@ -179,12 +181,12 @@ class ReminderScheduler:
         )
         logger.info("已添加年度数据清理任务（每年12月31日 23:50）")
         return job
-    
+
     def _yearly_data_cleanup(self):
         """年度数据清理：统计/图表/偏好绑定归档后清空，保留必要数据"""
         import os
         import shutil
-        
+
         data_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"
         )
@@ -193,9 +195,9 @@ class ReminderScheduler:
         prefs_file = os.path.join(data_dir, "user_prefs.json")
         backup_dir = os.path.join(data_dir, "backup")
         year = datetime.now(self.local_tz).year
-        
+
         logger.info(f"🧹 开始 {year} 年度数据清理...")
-        
+
         # 1. 归档并重置评分数据
         try:
             if os.path.exists(ratings_file):
@@ -207,7 +209,7 @@ class ReminderScheduler:
                 logger.info(f"✓ 评分数据已归档: {archive}")
         except Exception as e:
             logger.error(f"评分数据归档失败: {e}")
-        
+
         # 2. 归档并重置用户偏好绑定（一年一绑：/setdriver /setteam 绑定下一年需重新设置）
         try:
             if os.path.exists(prefs_file):
@@ -219,7 +221,7 @@ class ReminderScheduler:
                 logger.info(f"✓ 用户偏好绑定已归档: {archive}（下一年需重新设置）")
         except Exception as e:
             logger.error(f"用户偏好归档失败: {e}")
-        
+
         # 3. 归档并重置成绩推送记录
         try:
             pushed_file = os.path.join(data_dir, "pushed_results.json")
@@ -271,30 +273,30 @@ class ReminderScheduler:
                     logger.warning(f"{key} 内存态重载失败: {e}")
 
         logger.info(f"✓ {year} 年度数据清理完成（已保留赛道数据/赛程缓存）")
-        
+
     def stop(self):
         """停止调度器"""
         self.scheduler.shutdown()
         logger.info("定时任务调度器已停止")
-    
+
     def _make_job_id(self, session_type: str, round_num: str, suffix: str = "") -> str:
         """
         生成任务ID
-        
+
         Args:
             session_type: 环节类型
             round_num: 轮次
             suffix: 后缀
-            
+
         Returns:
             唯一任务ID
         """
         return f"f1_{session_type}_{round_num}_{suffix}" if suffix else f"f1_{session_type}_{round_num}"
-    
+
     def _send_reminder(self, session: Dict[str, Any], reminder_type: str):
         """
         发送提醒的包装函数
-        
+
         Args:
             session: 比赛环节信息
             reminder_type: 提醒类型（reminder/post_race）
@@ -325,7 +327,7 @@ class ReminderScheduler:
                     return
                 if not self._do_post_race_push(session, results):
                     self._schedule_poll(session, 0, kind="race_result")
-                    
+
         except Exception as e:
             logger.error(f"发送提醒失败: {e}")
 
@@ -501,7 +503,7 @@ class ReminderScheduler:
         # OpenF1 数据就绪即发，失败回退单张 pace 图，再失败不影响主流程
         if hasattr(self.notify_bot, 'send_image_url'):
             try:
-                from .chart_factory import render_race_report_chart, render_pace_chart
+                from .chart_factory import render_pace_chart, render_race_report_chart
                 _season = self.config.get('SEASON') or session['datetime'].year
                 chart_path = render_race_report_chart(_season, int(session['round']),
                                                       session.get('race_name', ''),
@@ -559,7 +561,7 @@ class ReminderScheduler:
 
         # 比赛周末结束：事故成本缓存即刻失效，下次 /car 重抓含本站的最新数据
         # （24h TTL 之外的主动失效钩子，防周一查询还隔着一天的旧缓存）
-        f1cosmos = self.config.get('f1cosmos')
+        self.config.get('f1cosmos')
         season = self.config.get('SEASON') or session['datetime'].year
         self._clear_destructors_cache(season)
         # F1Cosmos 事故数据自身更新有延迟：若此刻抓回的仍是不含本站的旧数据（非空，
@@ -815,7 +817,7 @@ class ReminderScheduler:
     def schedule_session_reminder(self, session: Dict[str, Any], advance_minutes: int):
         """
         调度单个比赛环节的提醒任务
-        
+
         Args:
             session: 比赛环节信息
             advance_minutes: 提前多少分钟提醒
@@ -828,13 +830,13 @@ class ReminderScheduler:
         # 任务已存在且时间未变则跳过；时间变更则重排
         if self._job_guard(job_id, reminder_time):
             return
-        
+
         # 如果提醒时间已过，跳过
         now = datetime.now(session['datetime'].tzinfo)
         if reminder_time < now:
             logger.debug(f"提醒时间已过，跳过: {job_id}")
             return
-        
+
         # 创建任务
         job = self.scheduler.add_job(
             func=self._send_reminder,
@@ -843,12 +845,12 @@ class ReminderScheduler:
             id=job_id,
             replace_existing=True
         )
-        
+
         self.scheduled_jobs[job_id] = job
-        
+
         local_time = reminder_time.astimezone(self.local_tz)
         logger.info(f"已调度提醒任务: {job_id} - 将于 {local_time.strftime('%Y-%m-%d %H:%M')} 执行")
-    
+
     # 环节预估时长（分钟），用于计算结果推送时间
     SESSION_DURATION = {
         'fp1': 60, 'fp2': 60, 'fp3': 60,
@@ -923,7 +925,7 @@ class ReminderScheduler:
         """
         ratings_store = self.config.get('ratings_store')
         base_url = self.config.get('rating_base_url')
-        group_openid = self.config.get('group_openid')
+        self.config.get('group_openid')
         if not ratings_store or not base_url:
             return
 
@@ -1043,7 +1045,7 @@ class ReminderScheduler:
 
     def _send_dm_personalized_standings(self, standings: Dict[str, Any], dm_users: Dict[str, Dict[str, Any]]):
         """私聊推送：每位设置偏好的用户收到自己关注的车手/车队最新排名"""
-        from .standings_format import parse_driver_standings, parse_constructor_standings
+        from .standings_format import parse_constructor_standings, parse_driver_standings
         d_entries = parse_driver_standings(standings.get("drivers") or {})
         t_entries = parse_constructor_standings(standings.get("constructors") or {})
         d_map = {e.get("Driver", {}).get("driverId"): e for e in d_entries}
@@ -1075,7 +1077,7 @@ class ReminderScheduler:
                 continue
 
             md = "## ⭐ 个性化积分播报\r\r" + "\r".join(lines)
-            txt = "⭐ 个性化积分播报\n\n" + "\n".join(l.replace("**", "") for l in lines)
+            txt = "⭐ 个性化积分播报\n\n" + "\n".join(line.replace("**", "") for line in lines)
             try:
                 ok = self.notify_bot.send_dm_markdown(user_openid, md, fallback_text=txt)
                 if ok is False:
@@ -1233,14 +1235,14 @@ class ReminderScheduler:
     def schedule_post_race_result(self, session: Dict[str, Any], delay_minutes: int):
         """
         调度赛后结果推送任务
-        
+
         Args:
             session: 比赛环节信息（必须是正赛）
             delay_minutes: 赛后延迟多少分钟推送
         """
         if session['type'] != 'race':
             return
-        
+
         job_id = self._make_job_id(session['type'], session['round'], f"result_{delay_minutes}")
 
         # 计算推送时间（假设比赛持续2小时）
@@ -1249,12 +1251,12 @@ class ReminderScheduler:
         # 任务已存在且时间未变则跳过；时间变更则重排
         if self._job_guard(job_id, post_time):
             return
-        
+
         # 如果时间已过，跳过
         now = datetime.now(session['datetime'].tzinfo)
         if post_time < now:
             return
-        
+
         # 创建任务
         job = self.scheduler.add_job(
             func=self._send_reminder,
@@ -1263,9 +1265,9 @@ class ReminderScheduler:
             id=job_id,
             replace_existing=True
         )
-        
+
         self.scheduled_jobs[job_id] = job
-        
+
         local_time = post_time.astimezone(self.local_tz)
         logger.info(f"已调度结果推送任务: {job_id} - 将于 {local_time.strftime('%Y-%m-%d %H:%M')} 执行")
 
@@ -1322,7 +1324,7 @@ class ReminderScheduler:
         if not self.config.get('news_collector'):
             return
         for hour in (8, 19):
-            job = self.scheduler.add_job(
+            self.scheduler.add_job(
                 func=self._push_news_digest,
                 trigger=CronTrigger(hour=hour, minute=0, timezone=self.local_tz),
                 id=f'news_digest_{hour}',
@@ -1411,28 +1413,28 @@ class ReminderScheduler:
         更新赛程任务（定期调用以获取最新赛程）
         """
         logger.info("正在更新赛程任务...")
-        
+
         # 获取未来7天的所有环节
         upcoming_sessions = self.f1_api.get_upcoming_sessions(hours_ahead=168)
-        
+
         reminder_times = self.config.get('REMINDER_TIMES', {
             'fp1': 30, 'fp2': 30, 'fp3': 30,
             'qualifying': 30, 'sprint': 30, 'race': 60
         })
-        
+
         post_race_delay = self.config.get('POST_RACE_DELAY', 30)
-        
+
         scheduled_count = 0
-        
+
         for session in upcoming_sessions:
             session_type = session['type']
-            
+
             # 调度提醒任务
             if session_type in reminder_times:
                 advance = reminder_times[session_type]
                 self.schedule_session_reminder(session, advance)
                 scheduled_count += 1
-            
+
             # 如果是正赛，调度赛后结果推送
             if session_type == 'race':
                 # 比赛周预创建评分条目（落盘持久，open_at=开赛+1h）：
@@ -1451,11 +1453,11 @@ class ReminderScheduler:
                 self.schedule_post_race_result(session, post_race_delay)
                 self.schedule_pre_race_pu_check(session)
                 self.schedule_rating_open(session)
-            
+
             # 排位/冲刺排位/冲刺赛，调度成绩推送
             if session_type in self.RESULT_PUSH_TYPES:
                 self.schedule_session_result(session, delay_minutes=30)
-        
+
         logger.info(f"赛程任务更新完成，新调度 {scheduled_count} 个任务")
 
         # 自愈：补建过去48小时已结束但未推送的成绩轮询任务
@@ -1473,7 +1475,7 @@ class ReminderScheduler:
                                       close_hours=self.RATING_CLOSE_HOURS)
             except Exception as _e:
                 logger.warning(f"陈旧评分场次清扫失败: {_e}")
-    
+
     def add_daily_update_job(self):
         """
         添加每日赛程更新任务
@@ -1487,11 +1489,11 @@ class ReminderScheduler:
         )
         logger.info("已添加每日赛程更新任务（每天8:00）")
         return job
-    
+
     def list_jobs(self) -> List[Dict[str, Any]]:
         """
         获取所有已调度的任务列表
-        
+
         Returns:
             任务列表
         """
@@ -1504,14 +1506,14 @@ class ReminderScheduler:
                 'trigger': str(job.trigger)
             })
         return jobs
-    
+
     def remove_job(self, job_id: str) -> bool:
         """
         移除指定任务
-        
+
         Args:
             job_id: 任务ID
-            
+
         Returns:
             是否成功移除
         """
@@ -1524,12 +1526,12 @@ class ReminderScheduler:
         except Exception as e:
             logger.error(f"移除任务失败 {job_id}: {e}")
             return False
-    
+
     def clear_all_jobs(self):
         """清除所有F1相关的提醒任务"""
-        jobs_to_remove = [job_id for job_id in self.scheduled_jobs.keys()]
+        jobs_to_remove = list(self.scheduled_jobs.keys())
         for job_id in jobs_to_remove:
             self.remove_job(job_id)
-        
+
         self.scheduled_jobs.clear()
         logger.info("已清除所有F1提醒任务")

@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """
 F1 Schedule Bot — Discord 版（全功能，对齐 QQ 官方群版）
 
@@ -38,15 +39,15 @@ WEB_FEATURES_ENABLED = _RATING_BASE_REAL.startswith("http")
 if not WEB_FEATURES_ENABLED:
     os.environ.setdefault("RATING_BASE_URL", "local://files")
 
-from common.f1_api import F1API
-from common.scheduler import ReminderScheduler
-from common.user_prefs import UserPrefsStore
-from common.pushed_store import PushedResultsStore
-from common.circuits_manager import CircuitsManager
-from common.f1cosmos_api import F1CosmosAPI
-
 from bot import DiscordBot
 from i18n import LANG
+
+from common.circuits_manager import CircuitsManager
+from common.f1_api import F1API
+from common.f1cosmos_api import F1CosmosAPI
+from common.pushed_store import PushedResultsStore
+from common.scheduler import ReminderScheduler
+from common.user_prefs import UserPrefsStore
 
 logger = logging.getLogger(__name__)
 
@@ -308,7 +309,7 @@ class F1DiscordApp:
             self.logger.error("初始化失败，退出")
             sys.exit(1)
 
-        from commands import register_commands, CommandContext
+        from commands import CommandContext, register_commands
         ctx = CommandContext(
             f1_api=self.f1_api, f1cosmos=self.f1cosmos,
             circuits_manager=self.circuits_manager, llm=self.llm,
@@ -475,10 +476,10 @@ class F1DiscordApp:
                         official_checked = True
                         local_sec = self.circuits_manager.time_to_seconds(local_record.get("time", ""))
                         official_sec = self.circuits_manager.time_to_seconds(official["time"])
-                        if official_sec and official_sec != local_sec:
-                            if self.circuits_manager.apply_official_record(circuit_id, official):
-                                circuit_data["lap_record"] = official
-                                llm_verified = True
+                        if (official_sec and official_sec != local_sec
+                                and self.circuits_manager.apply_official_record(circuit_id, official)):
+                            circuit_data["lap_record"] = official
+                            llm_verified = True
                 except Exception as e:
                     self.logger.warning(f"官网圈速纪录核查失败: {e}")
 
@@ -487,15 +488,15 @@ class F1DiscordApp:
                 try:
                     name_en = circuit_data.get("name_en") or circuit_name
                     llm_record = self.llm.verify_lap_record(name_en, circuit_data.get("lap_record", {}))
-                    if llm_record and llm_record.get("changed"):
-                        if self.circuits_manager.apply_llm_verified_record(circuit_id, llm_record):
-                            circuit_data["lap_record"] = {
-                                "time": llm_record["time"],
-                                "driver": llm_record.get("driver") or llm_record.get("driver_en", ""),
-                                "driver_en": llm_record.get("driver_en", ""),
-                                "year": llm_record.get("year", ""),
-                            }
-                            llm_verified = True
+                    if (llm_record and llm_record.get("changed")
+                            and self.circuits_manager.apply_llm_verified_record(circuit_id, llm_record)):
+                        circuit_data["lap_record"] = {
+                            "time": llm_record["time"],
+                            "driver": llm_record.get("driver") or llm_record.get("driver_en", ""),
+                            "driver_en": llm_record.get("driver_en", ""),
+                            "year": llm_record.get("year", ""),
+                        }
+                        llm_verified = True
                 except Exception as e:
                     self.logger.warning(f"LLM 圈速纪录核查失败: {e}")
 
@@ -519,6 +520,7 @@ class F1DiscordApp:
 
     def _upgrades_watch_step(self, attempt: int = 0):
         from datetime import timezone as _tzu
+
         from apscheduler.triggers.date import DateTrigger
         from pytz import timezone as _ptz
         try:

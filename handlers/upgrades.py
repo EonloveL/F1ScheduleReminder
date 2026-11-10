@@ -1,9 +1,8 @@
-# -*- coding: utf-8 -*-
 """指令处理：升级件
 （/upgrades /upgrade——从 main.py 指令分发链原样迁移，行为零变化）"""
 import logging
 
-from common.f1_tools import parse_upgrade_query, find_race_for_query
+from common.f1_tools import find_race_for_query, parse_upgrade_query
 from common.qq_group_bot import QQGroupBot
 
 logger = logging.getLogger(__name__)

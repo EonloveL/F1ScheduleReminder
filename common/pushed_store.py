@@ -4,8 +4,8 @@ F1赛程提醒机器人 - 成绩推送记录
 """
 
 import json
-import os
 import logging
+import os
 import threading
 from datetime import datetime, timezone
 
@@ -27,7 +27,7 @@ class PushedResultsStore:
     def _load(self):
         if os.path.exists(self.file_path):
             try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
+                with open(self.file_path, encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
                 logger.error(f"读取推送记录失败: {e}")

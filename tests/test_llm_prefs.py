@@ -1,12 +1,9 @@
-# -*- coding: utf-8 -*-
 """LLM 分层模型偏好 + 供应商注册表（离线单测）"""
-import importlib
-import os
 
 import pytest
 
 from common import llm_prefs
-from common.llm_assistant import LLMAssistant, PROVIDERS
+from common.llm_assistant import PROVIDERS, LLMAssistant
 
 
 @pytest.fixture(autouse=True)

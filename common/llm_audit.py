@@ -75,10 +75,7 @@ class LLMToolAudit:
             qid: 问答链路 trace ID（贯穿一次问答的 L0/L1/L2 全部日志与审计）
         """
         try:
-            if isinstance(args, str):
-                args_str = args
-            else:
-                args_str = json.dumps(args or {}, ensure_ascii=False)
+            args_str = args if isinstance(args, str) else json.dumps(args or {}, ensure_ascii=False)
             entry = {
                 "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "tool": tool,

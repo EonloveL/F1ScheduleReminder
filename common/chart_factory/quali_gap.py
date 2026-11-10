@@ -2,10 +2,10 @@ import os
 from typing import Dict, Optional
 
 from .core import (
-    logger,
     EXPORTS_DIR,
-    _setup_dark_fig,
     _safe_int,
+    _setup_dark_fig,
+    logger,
 )
 
 

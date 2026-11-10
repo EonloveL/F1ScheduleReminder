@@ -15,7 +15,7 @@ def _load_prompt(name: str, default: str) -> str:
     """从 common/prompts/<name>.txt 加载提示词，失败回退内嵌默认值"""
     try:
         path = os.path.join(_PROMPTS_DIR, name + ".txt")
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             text = f.read().strip()
         if text:
             return text

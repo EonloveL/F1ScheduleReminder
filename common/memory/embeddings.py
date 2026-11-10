@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Embedding 后端接口（可选升级，缺省关闭 → 纯实体匹配）
 
 三种模式（MEMORY_EMBEDDING 环境变量）：
@@ -12,6 +11,7 @@
 """
 import logging
 import os
+import threading as _threading
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ class LocalFastEmbedBackend:
 
 _backend = None
 _backend_tried = False
-import threading as _threading
+
 _backend_lock = _threading.Lock()
 
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """管理员告警钩子：common/ 层模块（无 bot 引用）发现数据源异常时上报。
 main.py 在 qq_bot 就绪后注册 hook（DM ADMIN_OPENIDS）；未注册时仅记日志。
 按 key 去重（默认 12h 冷却），防解析循环反复轰炸。"""

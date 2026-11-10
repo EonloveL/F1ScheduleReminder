@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """实体与主题词抽取（记忆相关性计算的默认引擎）
 
 实体三类：
@@ -9,7 +8,6 @@
 设计原则：零依赖、确定性、毫秒级；向量后端（embeddings.py）是可选升级而非替代。
 """
 import logging
-import re
 from typing import Set
 
 logger = logging.getLogger(__name__)
@@ -86,7 +84,4 @@ def has_reference_hint(text: str) -> bool:
     for h in REFERENCE_HINTS:
         if h in t:
             return True
-    for pron in ("他", "她", "它"):
-        if pron in t and f"其{pron}" not in t and "吉他" not in t:
-            return True
-    return False
+    return any(pron in t and f"其{pron}" not in t and "吉他" not in t for pron in ("他", "她", "它"))

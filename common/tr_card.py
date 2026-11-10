@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """F1 转播风格 Team Radio 静态卡片渲染（/tr 指令 DIY）。
 
 clean-room 说明：wertewrt/F1_team_radio 无开源许可证（保留所有权利），其代码、

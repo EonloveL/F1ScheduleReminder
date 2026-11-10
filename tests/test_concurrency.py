@@ -1,16 +1,12 @@
-# -*- coding: utf-8 -*-
 """并发回归测试：多线程同时写共享 JSON 存储——这正是"读代码读不出来"的那类 bug
 （scheduler 线程 × webhook 线程并发写 ratings/user_prefs/memory/pushed_store）。
 断言：N 线程并发写后 文件不损坏（json 可解析）+ 写入计数不丢 + 无异常。"""
 import json
 import threading
 
-import pytest
-
+from common.memory.store import MemoryStore
 from common.pushed_store import PushedResultsStore
 from common.ratings_store import RatingsStore
-from common.memory.store import MemoryStore
-
 
 THREADS = 8
 ITER = 10

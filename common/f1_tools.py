@@ -95,6 +95,7 @@ def parse_upgrade_query(arg: str) -> dict:
     Returns: {"year": int|None, "round": int|None, "team": str|None, "gp": str|None}
     """
     import re as _re
+
     from common.f1cosmos_api import TEAM_ALIASES_CN
     q = (arg or "").strip()
     year = None
@@ -183,7 +184,9 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         f1cosmos: F1CosmosAPI 实例（PU/升级件数据源），未启用时传 None
         season: 当前赛季年份，缺省取当前年
     """
-    from datetime import datetime as _dt, timezone as _tzu
+    from datetime import datetime as _dt
+    from datetime import timezone as _tzu
+
     from pytz import timezone as _tz
 
     if season is None:
@@ -209,12 +212,10 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         if not (year and int(year) != season):
             try:
                 import os as _os
+
                 from .chart_factory import render_points_trend_chart
                 base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
-                if not base:
-                    p = None
-                else:
-                    p = render_points_trend_chart(season, f1_api=f1_api)
+                p = None if not base else render_points_trend_chart(season, f1_api=f1_api)
                 if p and base:
                     fname = _os.path.basename(p)
                     result["chart_md"] = f"![pic#800px #450px]({base}/exports/{fname})"
@@ -380,12 +381,10 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         if elements and q_season == season:
             try:
                 import os as _os
+
                 from .chart_factory import render_pu_usage_chart
                 base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
-                if not base:
-                    p = None
-                else:
-                    p = render_pu_usage_chart(season, f1cosmos=f1cosmos)
+                p = None if not base else render_pu_usage_chart(season, f1cosmos=f1cosmos)
                 if p and base:
                     out["chart_md"] = f"![pic#800px #600px]({base}/exports/{_os.path.basename(p)})"
                     out.setdefault("note", "")
@@ -692,6 +691,7 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
     def _safety_car_events(gp="", year=None):
         """安全车/VSC/红旗事件（chart_factory.get_sc_events 共享提取）"""
         from datetime import datetime as _dt
+
         from .chart_factory import get_sc_events, render_sc_timeline
         from .f1_api import find_race_by_circuit
         q_season = int(year) if year else season
@@ -761,8 +761,9 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
     def _race_charts(gp="", chart="race_report"):
         """分站可视化图表（统一入口，chart_md 由 L2 嵌图）"""
         from datetime import datetime as _dt
-        from .f1_api import find_race_by_circuit
+
         from . import chart_factory as cf
+        from .f1_api import find_race_by_circuit
         q = (gp or "").strip()
         chart = (chart or "race_report").strip().lower()
         render_map = {
@@ -787,7 +788,8 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
             return {"error": f"未找到分站（{q or '最近已完赛'}）"}
         # 未赛判定按环节开始时间戳：排位类图表看排位时间（排位结束即可查，
         # 周六晚问排位差距图不该被"分站未赛"挡住），正赛类看正赛时间
-        from datetime import timezone as _tzu2, timedelta as _td2
+        from datetime import timedelta as _td2
+        from datetime import timezone as _tzu2
         race_dt = None
         try:
             if chart in ("quali_gap", "sprint_quali_gap"):
@@ -842,6 +844,7 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         result = {"season": q_season, "formatted_text": text}
         try:
             import os as _os
+
             from .chart_factory import render_destructors_chart
             base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
             if base:
@@ -986,12 +989,10 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         # 附车队实力雷达图（随赛季进程自动按累计成绩+升级件重算，文件名带轮次破缓存）
         try:
             import os as _os
+
             from .chart_factory import render_team_strength_radar
             base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
-            if not base:
-                p = None
-            else:
-                p = render_team_strength_radar(season, f1_api=f1_api, f1cosmos=f1cosmos)
+            p = None if not base else render_team_strength_radar(season, f1_api=f1_api, f1cosmos=f1cosmos)
             if p and base:
                 result["chart_md"] = f"![pic#600px #540px]({base}/exports/{_os.path.basename(p)})"
                 result["note"] = ("chart_md 为车队实力雷达图（6维 min-max 归一化，外圈=更强），"
@@ -1011,8 +1012,9 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
     def _stint_analysis(gp="", driver="", year=None):
         """正赛 stint 节奏/轮胎衰减分析（OpenF1 主源，2023+ 含配方）"""
         from datetime import datetime as _dt
-        from .stint_analysis import StintAnalyzer
+
         from .f1_api import find_race_by_circuit
+        from .stint_analysis import StintAnalyzer
 
         q_season = int(year) if year else season
         schedule = f1_api.get_schedule_for_year(q_season) or []
@@ -1087,6 +1089,7 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         if is_completed:
             try:
                 import os as _os
+
                 from .chart_factory import render_pace_chart
                 base = _os.getenv("RATING_BASE_URL", "").rstrip("/")
                 p = (render_pace_chart(q_season, round_num, race.get("raceName", ""),
@@ -1128,6 +1131,7 @@ def build_handlers(f1_api, f1cosmos=None, season: int = None):
         """B站视频导读：F1关键词门禁 → 字幕 → ASR兜底（common/bilibili_summary）。
         结果按 bvid 缓存（字幕/ASR文本不变长缓存，无文本负结果6h）——同视频重复提问不重跑ASR"""
         import os as _os
+
         from .bilibili_summary import BiliVideoClient
         client = BiliVideoClient()
         bvid = BiliVideoClient.parse_bvid(url or "")

@@ -3,12 +3,11 @@ from collections import defaultdict
 from typing import Dict, List, Optional
 
 from .core import (
-    logger,
     EXPORTS_DIR,
-    _setup_dark_fig,
     _boxplot_compat,
     _race_entries,
-    _safe_int,
+    _setup_dark_fig,
+    logger,
 )
 
 
@@ -72,10 +71,10 @@ def render_pitstop_chart(season: int, round_num: int, race_name: str = "",
     ax.set_facecolor("#1a1d26")
     _boxplot_compat(ax, [v for _, v in stats], horizontal=True, positions=range(len(stats)),
                widths=0.55, patch_artist=True, showfliers=True,
-               medianprops=dict(color="#ff8c00", linewidth=2),
-               whiskerprops=dict(color="#cccccc"), capprops=dict(color="#cccccc"),
-               boxprops=dict(facecolor="#2a2e3d", edgecolor="#cccccc", alpha=0.85),
-               flierprops=dict(marker="o", markerfacecolor="#666", markersize=4))
+               medianprops={"color": "#ff8c00", "linewidth": 2},
+               whiskerprops={"color": "#cccccc"}, capprops={"color": "#cccccc"},
+               boxprops={"facecolor": "#2a2e3d", "edgecolor": "#cccccc", "alpha": 0.85},
+               flierprops={"marker": "o", "markerfacecolor": "#666", "markersize": 4})
     ax.set_yticks(range(len(stats)))
     ax.set_yticklabels([f"{t.split(' F1')[0].split(' Formula')[0]}（{counts[t]}次）"
                         for t, _ in stats], color="#eeeeee", fontsize=10)

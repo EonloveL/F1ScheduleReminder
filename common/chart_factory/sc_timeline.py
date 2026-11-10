@@ -2,12 +2,12 @@ import os
 from typing import Any, Dict, List, Optional
 
 from .core import (
-    logger,
     EXPORTS_DIR,
-    _setup_dark_fig,
     _openf1_session_key,
     _race_entries,
     _safe_int,
+    _setup_dark_fig,
+    logger,
 )
 
 
@@ -54,10 +54,9 @@ def get_sc_events(season: int, round_num: int, f1_api=None) -> Optional[List[Dic
                                    "message": m0})  # 前段未闭合先落估算段
                     logger.warning(f"[chart] SC 事件同 kind 二次 deploy，前段按估算闭合: L{s0}")
                 open_ev["vsc"] = (lap, raw_msg)
-            elif "ending" in msg or "clear" in msg:
-                if "vsc" in open_ev:
-                    s, m = open_ev.pop("vsc")
-                    events.append({"kind": "vsc", "start_lap": s, "end_lap": lap, "message": m})
+            elif ("ending" in msg or "clear" in msg) and "vsc" in open_ev:
+                s, m = open_ev.pop("vsc")
+                events.append({"kind": "vsc", "start_lap": s, "end_lap": lap, "message": m})
         elif is_red:
             # 红旗：同一红旗可能多条电文（部署+恢复说明），相邻圈去重
             if events and events[-1]["kind"] == "red" \
@@ -74,10 +73,9 @@ def get_sc_events(season: int, round_num: int, f1_api=None) -> Optional[List[Dic
                                    "message": m0})
                     logger.warning(f"[chart] SC 事件同 kind 二次 deploy，前段按估算闭合: L{s0}")
                 open_ev["sc"] = (lap, raw_msg)
-            elif "in this" in msg or "ending" in msg or "clear" in msg:
-                if "sc" in open_ev:
-                    s, m = open_ev.pop("sc")
-                    events.append({"kind": "sc", "start_lap": s, "end_lap": lap, "message": m})
+            elif ("in this" in msg or "ending" in msg or "clear" in msg) and "sc" in open_ev:
+                s, m = open_ev.pop("sc")
+                events.append({"kind": "sc", "start_lap": s, "end_lap": lap, "message": m})
     for k, (lap, m) in open_ev.items():  # 未配对收尾（到比赛结束）
         events.append({"kind": k, "start_lap": lap, "end_lap": lap + 2, "message": m})
     events.sort(key=lambda x: x["start_lap"])

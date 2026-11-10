@@ -3,9 +3,9 @@ from collections import defaultdict
 from typing import Optional
 
 from .core import (
-    logger,
     EXPORTS_DIR,
     _setup_dark_fig,
+    logger,
 )
 
 

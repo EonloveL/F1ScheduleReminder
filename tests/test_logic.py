@@ -1,9 +1,8 @@
-# -*- coding: utf-8 -*-
 """纯逻辑单测：查询解析 / 升级分类 / 积分榜投影判定（不触网）"""
 import copy
 
-from common.f1_tools import parse_upgrade_query, parse_race_query, _upgrade_type_class
 from common.f1_api import F1APIManager
+from common.f1_tools import _upgrade_type_class, parse_race_query, parse_upgrade_query
 
 
 class TestParseUpgradeQuery:

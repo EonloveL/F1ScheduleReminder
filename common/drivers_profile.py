@@ -38,7 +38,7 @@ import json
 import logging
 import os
 import threading
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +163,7 @@ def _load_profile() -> Dict[str, Any]:
             if _cache["profile"] is not None and mtime == _cache["mtime"]:
                 return _cache["profile"]
             try:
-                with open(_PROFILE_FILE, "r", encoding="utf-8") as f:
+                with open(_PROFILE_FILE, encoding="utf-8") as f:
                     data = json.load(f)
                 if not isinstance(data.get("drivers"), dict):
                     raise ValueError("drivers 字段缺失或格式错误")
@@ -332,7 +332,7 @@ def auto_register_substitutes(entries: List[Dict[str, Any]]) -> List[str]:
     # 原子写回 profile 文件
     try:
         try:
-            with open(_PROFILE_FILE, "r", encoding="utf-8") as f:
+            with open(_PROFILE_FILE, encoding="utf-8") as f:
                 data = json.load(f)
             if not isinstance(data.get("drivers"), dict):
                 raise ValueError("drivers 字段缺失")
@@ -356,7 +356,7 @@ def auto_register_substitutes(entries: List[Dict[str, Any]]) -> List[str]:
         os.replace(tmp, _PROFILE_FILE)
         reload_profile()  # 缓存立即失效，下游（锚定表/别名/新闻匹配）即刻生效
         names = [n["name_en"] for n in newcomers]
-        logger.warning(f"⚠️ 积分榜发现档案外车手，已自动注册为 substitute（待人工核实）: "
+        logger.warning("⚠️ 积分榜发现档案外车手，已自动注册为 substitute（待人工核实）: "
                        + ", ".join(names))
         return names
     except Exception as e:

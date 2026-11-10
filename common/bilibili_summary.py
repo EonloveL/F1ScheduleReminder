@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """B站视频摘要数据层：链接解析 / 视频元数据 / 字幕获取 / F1相关性门禁 / ASR兜底。
 
 字幕接口（player/wbi/v2）2024 起需登录态，否则字幕列表恒为空（2026-10-23 实证：
@@ -14,6 +13,7 @@ import logging
 import os
 import re
 import tempfile
+import threading as _threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 # small ~1GB 权重多 5-30s 加载；复审M1：无锁并发首触发会双份加载。
 # 注：与 TR 转写模型尺寸/实例独立——TR 默认 base 英文、本模块默认 small 自动检测，
 # 两者同时启用时会有两份模型常驻内存，资源紧张环境注意）
-import threading as _threading
 
 _whisper_model = None
 _whisper_load_tried = False
@@ -231,7 +230,7 @@ class BiliVideoClient:
         strong_terms = set(_F1_STRONG)
         weak_terms = set()
         try:
-            from .drivers_profile import get_driver_aliases, get_team_aliases, get_known_driver_names
+            from .drivers_profile import get_driver_aliases, get_known_driver_names, get_team_aliases
             for src in (get_driver_aliases(), get_team_aliases()):
                 for a in src:
                     a = a.lower()

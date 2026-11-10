@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Discord 原生格式化（替代复用 QQGroupBot 的硬编码北京时间格式化器）
 
 核心：所有时间用 Discord 原生 <t:epoch> 时间戳——按每个用户自己设备的
@@ -6,7 +5,8 @@
 （Discord 不提供用户时区 API，<t:> 就是时区识别的正解；纯文本场景由
  /tz 用户偏好 + /ask 注入用户时区兜底）
 """
-from datetime import datetime, timezone as _tzu
+from datetime import datetime
+from datetime import timezone as _tzu
 from typing import Any, Dict, List, Optional
 
 from i18n import T, session_name
