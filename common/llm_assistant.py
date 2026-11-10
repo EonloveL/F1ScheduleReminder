@@ -28,8 +28,10 @@ from .llm.engine import EngineMixin
 from .llm.layered import LayeredMixin
 from .llm.misc import MiscMixin
 from .llm.prompts import _load_prompt
-from .llm.providers import PROVIDERS  # noqa: F401  公开常量，供测试/外部引用
-from .llm.providers import ProvidersMixin
+from .llm.providers import (
+    PROVIDERS,  # noqa: F401  公开常量，供测试/外部引用
+    ProvidersMixin,
+)
 from .llm.vision import VisionMixin
 
 logger = logging.getLogger(__name__)
