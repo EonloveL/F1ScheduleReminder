@@ -15,12 +15,14 @@ COPY pyproject.toml uv.lock /app/
 # OSS 默认镜像装全平台依赖（QQ + Discord 共用 common），便于同一份镜像跑不同入口
 RUN uv sync --locked --extra qq --extra discord --no-dev --no-install-project
 
-# 创建非 root 运行用户，确保数据/导出目录可写
-RUN useradd -m -u 1000 bot && mkdir -p /app/data/exports && chown -R bot:bot /app
+# 创建非 root 运行用户
+RUN useradd -m -u 1000 bot
 
 # 复制应用代码并完成 editable 安装
 COPY . /app/
-RUN uv sync --locked --extra qq --extra discord --no-dev
+RUN uv sync --locked --extra qq --extra discord --no-dev \
+    && mkdir -p /app/data/exports \
+    && chown -R bot:bot /app
 
 ENV PATH="/app/.venv/bin:$PATH"
 USER bot
